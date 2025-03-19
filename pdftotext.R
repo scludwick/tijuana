@@ -10,19 +10,18 @@ need <- packs[!packs %in% installed.packages()[,'Package']]
 install.packages(need)
 sapply(packs,library,character.only = T)
 
+### decide (here?) whether to combine chapters into one plan or keep separate ###
 
-### here will need to figure out what to do with docs that are in chapters vs complete plans
-
-# directories to raw pdfs and folder to store converted txt files
+# directories for plan pdfs and folder to store converted txt files
 pdf_dir <- "tijuanabox/raw_data/plan_pdfs"
-txt_dir <- "tijuanabox/int_data/plan_txts"
+txt_dir <- "tijuanabox/int_data/plan_txts_raw"
 if (!dir.exists(txt_dir)) {
   dir.create(txt_dir)
 }
 
 pdfs <- list.files(pdf_dir) 
 
-# here is code adapted from salinas:
+# code for converting pdfs to .txts adapted from salinas:
 for (file in pdfs) {
   txt_file_path <- file.path(txt_dir, sub("\\.pdf$", ".txt", file))
   if (file.exists(txt_file_path) && !CLOBBER) {
