@@ -28,7 +28,7 @@ white_space_density_threshold <- 0.75
 # (20k is pretty generous)
 max_characters = 20e3
 
-# what are these ???
+# why doing this and not just using data ???
 data <- vector(mode = "list", length = length(raw_files))
 dataraw <- vector(mode = "list", length = length(raw_files))
 dataintermed <- vector(mode = "list", length = length(raw_files))
