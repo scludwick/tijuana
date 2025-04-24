@@ -1,4 +1,3 @@
-# practicing text processing on manually downloaded plan
 # using code from salinas
 
 #set-up: decide whether clobber is true or false,
@@ -19,7 +18,7 @@ if (!dir.exists(txt_dir)) {
   dir.create(txt_dir)
 }
 
-pdfs <- list.files(pdf_dir) 
+pdfs <- list.files(pdf_dir, pattern = ".pdf")
 
 # code for converting pdfs to .txts adapted from salinas:
 for (file in pdfs) {
@@ -44,3 +43,4 @@ for (file in pdfs) {
   })
 }
 
+# write script to return list of files with errors?

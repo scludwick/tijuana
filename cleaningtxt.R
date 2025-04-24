@@ -17,7 +17,7 @@ if (!dir.exists(clean_txt_dir)) {
 
 raw_files <- list.files(raw_txt_dir, full.names = T)
 
-### FROM SALINAS PROJ: change thresholds? DOES NOT INCLUDE HEADER/FOOTER REMOVAL FROM SALINAS
+### FROM SALINAS PROJ, change thresholds? DOES NOT INCLUDE HEADER/FOOTER REMOVAL FROM SALINAS
 # These thresholds were set for this project based on testing of samples
 # what are maximum proportions of characters are punctuation, numeric characters, or white space?
 # if want to turn off, set to 1 (i.e., keep all because ratio cannot be > 1)
@@ -28,7 +28,7 @@ white_space_density_threshold <- 0.75
 # (20k is pretty generous)
 max_characters = 20e3
 
-# why doing this and not just using data ???
+# why doing this and not just using data[[x]] i don't see where dataraw or dataintermed are used ???
 data <- vector(mode = "list", length = length(raw_files))
 dataraw <- vector(mode = "list", length = length(raw_files))
 dataintermed <- vector(mode = "list", length = length(raw_files))
@@ -89,6 +89,8 @@ for (x in seq_along(raw_files)) {
     saveRDS(object = data[[x]], file = cleaned_file)
   }
 }
+
+### this not giving numfail, punctfail, spacefail for all files 
 
 # punctfail: pgs 3-11 are TOCs, sensible to remove
 # spacefail: pg 192-194, 285 seem to be tables? not sure 

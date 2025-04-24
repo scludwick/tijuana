@@ -6,7 +6,7 @@ irwm_db <- read.csv("tijuanabox/raw_data/planlinks.csv")
 irwm_db <- irwm_db %>%
   mutate(region_name = paste0("Region_", str_extract(IRWM_Region, "[^-]+"))) %>%
   group_by(IRWM_Region, year) %>%
-  mutate(region_year = paste0(region_name, "_", year))
+  mutate(region_year = paste0(region_name, "_", year)) %>%
 
   # mutate(n = row_number()) %>% 
   # mutate(alln = row_number(n)) %>%
@@ -15,6 +15,7 @@ irwm_db <- irwm_db %>%
   #          case_when(alln > 1 ~ paste0(region_name, "_", year, "_part", n, ".pdf"),
   #                    alln == 1 ~ paste0(region_name, "_", year, ".pdf"))) %>%
   ungroup()
+
 
 urls <- irwm_db$url
 filename <- paste0(irwm_db$region_year, "_")
