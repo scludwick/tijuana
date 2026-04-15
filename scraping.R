@@ -1,10 +1,12 @@
 # download plans from spreadsheet
+CLOBBER <- FALSE  # Set TRUE to re-download already-existing PDFs
+
 library(dplyr)
 library(stringr)
 irwm_db <- read.csv("tijuanabox/raw_data/planlinks.csv")
 ## add if statement to this if nrow within group is > 1
 irwm_db <- irwm_db %>%
-  mutate(region_name = paste0("Region_", str_extract(IRWM_Region, "[^-]+"))) %>%
+  mutate(region_name = paste0("Region_", str_trim(str_extract(IRWM_Region, "[^-]+")))) %>%
   group_by(IRWM_Region, year) %>%
   mutate(region_year = paste0(region_name, "_", year)) %>%
 
@@ -40,10 +42,12 @@ planloc <- "tijuanabox/raw_data/plan_pdfs"
 
 
 ### this works when URL is .pdf link but not for other types. also rethink how to name the files, I had done like "part_n" before but thought we might want to know what's in them if we have it (like if appendix in name)
+sanitize_filename <- function(x) gsub(" ", "_", x)
+
 download_plans <- function(url, filename) {
-  pdf_file <- file.path(planloc, paste0(filename, basename(url)))
+  pdf_file <- file.path(planloc, sanitize_filename(paste0(filename, basename(url))))
   tryCatch({
-    if(!file.exists(pdf_file)) {
+    if(CLOBBER || !file.exists(pdf_file)) {
       download.file(url, destfile = pdf_file)
     }
     else {

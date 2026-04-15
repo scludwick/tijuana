@@ -1,6 +1,6 @@
 # cleaning txt files to remove maps, figs, TOCs, headers/footers(?)
 
-CLOBBER <- TRUE
+CLOBBER <- FALSE  # Set TRUE to re-clean already-processed files
 ### code for cleaning .txt files before textnet, adapted from salinas proj
 
 packs <- c("data.table", "stringr", "dplyr")
