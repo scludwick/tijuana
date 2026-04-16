@@ -29,14 +29,17 @@ import csv
 import json
 import os
 import re
+import sys
 import traceback
 from collections import defaultdict
+
+csv.field_size_limit(sys.maxsize)
 
 import anthropic
 
 # === FLAGS ===
-TESTING = True   # Set False to process all Region_Years
-CLOBBER = False  # Set True to overwrite existing dict files
+TESTING = False   # Set False to process all Region_Years
+CLOBBER = True  # Set True to overwrite existing dict files
 
 # === PATHS ===
 TXT_DIR  = "tijuanabox/int_data/plan_txts_raw"

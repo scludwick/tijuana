@@ -32,7 +32,7 @@ import subprocess
 import shutil
 import traceback
 
-CLOBBER = True  # Set True to overwrite existing txt files
+CLOBBER = False  # Set True to overwrite existing txt files
 
 # Paths — adjust if running from a different working directory
 PDF_DIR = "tijuanabox/raw_data/plan_pdfs"
@@ -87,6 +87,15 @@ def extract_text_ocr(pdf_path):
         return []
 
 
+def is_pdf(path):
+    """Check magic bytes — reliable regardless of file extension."""
+    try:
+        with open(path, "rb") as f:
+            return f.read(4) == b"%PDF"
+    except OSError:
+        return False
+
+
 def write_tsv(pages, txt_path):
     """Write page list to TSV matching pdftotext.R output format."""
     with open(txt_path, "w", newline="", encoding="utf-8") as f:
@@ -95,6 +104,28 @@ def write_tsv(pages, txt_path):
         for i, text in enumerate(pages, 1):
             writer.writerow([i, text])
 
+
+# ── Orphan cleanup ───────────────────────────────────────────────────────────
+# Delete any .txt file in plan_txts_raw/ whose source PDF no longer exists.
+
+pdf_stems = set()
+for fname in os.listdir(PDF_DIR):
+    if os.path.isfile(os.path.join(PDF_DIR, fname)):
+        stem = fname[:-4] if fname.lower().endswith(".pdf") else fname
+        pdf_stems.add(stem)
+
+deleted = 0
+for txt_fname in sorted(os.listdir(TXT_DIR)):
+    if not txt_fname.endswith(".txt"):
+        continue
+    stem = txt_fname[:-4]
+    if stem not in pdf_stems:
+        os.remove(os.path.join(TXT_DIR, txt_fname))
+        print(f"  Removed orphan: {txt_fname}")
+        deleted += 1
+
+if deleted:
+    print(f"Removed {deleted} orphaned text file(s).\n")
 
 # ── Main loop ────────────────────────────────────────────────────────────────
 
@@ -106,12 +137,17 @@ converted = skipped = failed = 0
 for fname in files:
     pdf_path = os.path.join(PDF_DIR, fname)
 
-    # Skip directories
+    # Skip directories and non-PDF files
     if os.path.isdir(pdf_path):
         continue
+    if not is_pdf(pdf_path):
+        print(f"  Skipping non-PDF: {fname[:70]}")
+        skipped += 1
+        continue
 
-    # Strip .pdf extension if present; otherwise use full filename as stem
+    # Strip .pdf extension for the output filename stem
     stem = fname[:-4] if fname.lower().endswith(".pdf") else fname
+    # Note: all expected files end in .pdf; magic bytes check above catches anything else
     txt_path = os.path.join(TXT_DIR, stem + ".txt")
 
     if os.path.exists(txt_path) and not CLOBBER:
