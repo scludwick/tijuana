@@ -122,7 +122,20 @@ parsed_files <- list.files("tijuanabox/int_data/parsed_files",
 parsed <- lapply(parsed_files, textNet::read_parsed_trf)
 names(parsed) <- basename(parsed_files)
 
-group_keys <- str_extract(basename(parsed_files), "^Region_[^_]+_[0-9]{4}")
+# Extract Region_X_YYYY key; handle legacy double-underscore filenames (Region_X__YYYY)
+# by normalising to single underscore before extracting.
+group_keys <- str_extract(
+  str_replace(basename(parsed_files), "^(Region_[^_]+)__([0-9]{4})", "\\1_\\2"),
+  "^Region_[^_]+_[0-9]{4}"
+)
+
+if (any(is.na(group_keys))) {
+  warning(sum(is.na(group_keys)), " file(s) could not be assigned a Region_Year key and will be skipped:\n",
+          paste(basename(parsed_files)[is.na(group_keys)], collapse = "\n"))
+  parsed_files <- parsed_files[!is.na(group_keys)]
+  parsed      <- parsed[!is.na(group_keys)]
+  group_keys  <- group_keys[!is.na(group_keys)]
+}
 
 projects <- vector(mode = "list", length = length(unique(group_keys)))
 names(projects) <- unique(group_keys)
@@ -131,7 +144,9 @@ filenum <- 1
 for (i in seq_along(projects)) {
   projects[[i]] <- parsed[[filenum]]
   filenum <- filenum + 1
-  while (filenum <= length(parsed) && group_keys[filenum] == names(projects)[i]) {
+  while (filenum <= length(parsed) &&
+         !is.na(group_keys[filenum]) &&
+         group_keys[filenum] == names(projects)[i]) {
     projects[[i]] <- rbind(projects[[i]], parsed[[filenum]])
     filenum <- filenum + 1
   }
