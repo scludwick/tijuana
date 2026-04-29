@@ -164,9 +164,53 @@ keptentities <- c("PERSON",
                   "LAW", "LANGUAGE",
                   "PARTIES", "CUSTOM", "DICT", "PATTERN")
 
+# Helper: write nodelist/edgelist as parquet + a JSON metadata sidecar, alongside
+# the RDS. Stage 4 (disambiguate_network_nodes.py) reads these parquets directly
+# instead of round-tripping the RDS through pyreadr (which silently drops list
+# elements that aren't tidy data frames).
+write_extract_parquets <- function(extract_obj, region_year, out_dir) {
+  node_path <- file.path(out_dir, paste0(region_year, "_nodelist.parquet"))
+  edge_path <- file.path(out_dir, paste0(region_year, "_edgelist.parquet"))
+  meta_path <- file.path(out_dir, paste0(region_year, "_meta.json"))
+
+  n_nodes <- NA_integer_
+  n_edges <- NA_integer_
+
+  if (!is.null(extract_obj$nodelist) && is.data.frame(extract_obj$nodelist)) {
+    arrow::write_parquet(extract_obj$nodelist, node_path)
+    n_nodes <- nrow(extract_obj$nodelist)
+  } else {
+    message("  no nodelist data frame for ", region_year, "; parquet not written")
+  }
+  if (!is.null(extract_obj$edgelist) && is.data.frame(extract_obj$edgelist)) {
+    arrow::write_parquet(extract_obj$edgelist, edge_path)
+    n_edges <- nrow(extract_obj$edgelist)
+  } else {
+    message("  no edgelist data frame for ", region_year, "; parquet not written")
+  }
+
+  # Non-tabular textNet metadata that doesn't fit a parquet column.
+  meta <- list(
+    region_year         = region_year,
+    textnet_version     = as.character(utils::packageVersion("textNet")),
+    spacy_model         = "en_core_web_trf",
+    extracted_at        = format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z"),
+    n_nodes             = n_nodes,
+    n_edges             = n_edges,
+    rds_list_elements   = if (is.list(extract_obj))
+                            sapply(extract_obj, function(x) class(x)[1])
+                          else
+                            class(extract_obj)[1],
+    keep_entities       = keptentities
+  )
+  jsonlite::write_json(meta, meta_path, auto_unbox = TRUE, pretty = TRUE)
+  invisible(list(node_path = node_path, edge_path = edge_path, meta_path = meta_path))
+}
+
 for (m in seq_along(projects)) {
+  ry_name      <- names(projects)[m]
   extract_file <- paste0("tijuanabox/int_data/raw_extracted_networks/extract_",
-                         names(projects)[m], ".RDS")
+                         ry_name, ".RDS")
   if (overwrite || !file.exists(extract_file)) {
     extracts[[m]] <- textnet_extract(projects[[m]],
                                      cl                    = 1,
@@ -174,9 +218,43 @@ for (m in seq_along(projects)) {
                                      return_to_memory      = TRUE,
                                      keep_incomplete_edges = TRUE,
                                      file                  = extract_file)
+    write_extract_parquets(
+      extracts[[m]],
+      region_year = ry_name,
+      out_dir     = "tijuanabox/int_data/raw_extracted_networks"
+    )
   } else {
     message("File already exists, skipping: ", extract_file)
   }
+}
+
+# === BACKFILL PARQUETS FOR EXISTING RDSes ===
+# If a Region_Year has an RDS but no parquet pair (e.g., RDSes produced before
+# this script was updated), load the RDS and write the parquets so stage 4 can
+# read them natively without pyreadr.
+rds_files <- list.files("tijuanabox/int_data/raw_extracted_networks",
+                        pattern = "^extract_.*\\.RDS$", full.names = TRUE)
+backfilled <- 0L
+for (rds_path in rds_files) {
+  ry_name <- sub("^extract_(Region_[^_]+_[0-9]{4})\\.RDS$", "\\1",
+                 basename(rds_path))
+  if (ry_name == basename(rds_path)) next  # didn't match, skip
+  node_path <- file.path("tijuanabox/int_data/raw_extracted_networks",
+                         paste0(ry_name, "_nodelist.parquet"))
+  edge_path <- file.path("tijuanabox/int_data/raw_extracted_networks",
+                         paste0(ry_name, "_edgelist.parquet"))
+  if (file.exists(node_path) && file.exists(edge_path)) next
+  message("Backfilling parquets for ", ry_name, " from RDS")
+  obj <- readRDS(rds_path)
+  write_extract_parquets(
+    obj,
+    region_year = ry_name,
+    out_dir     = "tijuanabox/int_data/raw_extracted_networks"
+  )
+  backfilled <- backfilled + 1L
+}
+if (backfilled > 0L) {
+  message("Backfilled parquets for ", backfilled, " Region_Year(s)")
 }
 
 saveRDS(object = extracts, file = "tijuanabox/int_data/raw_extracts.RDS")
