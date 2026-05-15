@@ -4,8 +4,12 @@
 # Setup: requires textNet, spaCy, python (conda env: spacy-env)
 # Set overwrite <- TRUE to re-parse already-processed files.
 
-overwrite <- FALSE
+overwrite <- TRUE
 testing   <- FALSE  # Set TRUE to process a fixed 5-file subset
+
+# === DICTIONARY TOGGLES ===
+use_global_dicts        <- TRUE   # Centralized water entity/infrastructure/bodies CSVs
+use_region_year_dicts   <- TRUE   # Per-Region_Year JSONs (pooled, filtered, applied to all docs)
 
 library(textNet)
 library(stringr)
@@ -63,32 +67,51 @@ parse_fileloc <- paste0("tijuanabox/int_data/parsed_files/", basename(files))
 # === ENTITY RULER BUILD ===
 
 # --- 1. Centralized dictionaries (water entities, infrastructure, water bodies) ---
-dict_csvs <- c(
-  "output/water_entity_dictionary.csv",
-  "output/water_infrastructure_dictionary.csv",
-  "output/water_bodies_dictionary.csv"
-)
-global_terms <- unlist(lapply(dict_csvs, function(f) {
-  d <- read.csv(f, stringsAsFactors = FALSE)
-  unlist(strsplit(d$all_names, split = "|", fixed = TRUE))
-}))
-
-# --- 2. Per-Region_Year dictionaries extracted from document glossary/acronym sections ---
-regional_json_files <- list.files("tijuanabox/int_data/dictionaries",
-                                  pattern = "^Region_.*_dict\\.json$",
-                                  full.names = TRUE)
-regional_terms <- if (length(regional_json_files) > 0) {
-  unlist(lapply(regional_json_files, jsonlite::fromJSON))
+if (use_global_dicts) {
+  dict_csvs <- c(
+    "output/water_entity_dictionary.csv",
+    "output/water_infrastructure_dictionary.csv",
+    "output/water_bodies_dictionary.csv"
+  )
+  global_terms <- unlist(lapply(dict_csvs, function(f) {
+    d <- read.csv(f, stringsAsFactors = FALSE)
+    unlist(strsplit(d$all_names, split = "|", fixed = TRUE))
+  }))
+  message("Loaded global dicts: ", length(global_terms), " term(s)")
 } else {
-  character(0)
+  global_terms <- character(0)
+  message("Global dicts disabled (use_global_dicts = FALSE)")
 }
 
-if (length(regional_json_files) > 0) {
-  message("Loaded ", length(regional_json_files), " regional dict(s), ",
-          length(regional_terms), " term(s)")
+# --- 2. Per-Region_Year dictionaries: pooled, filtered, applied universally ---
+# Filters (applied in order):
+#   - keep only proper nouns (term begins with a capital letter)
+#   - keep only multi-word terms (drops single tokens like "Watersheds")
+#   - deduplicate
+if (use_region_year_dicts) {
+  regional_json_files <- list.files("tijuanabox/int_data/dictionaries",
+                                    pattern = "^Region_.*_dict\\.json$",
+                                    full.names = TRUE)
+  raw_regional_terms <- if (length(regional_json_files) > 0) {
+    unlist(lapply(regional_json_files, jsonlite::fromJSON))
+  } else {
+    character(0)
+  }
+  regional_terms <- unique(raw_regional_terms)
+  regional_terms <- regional_terms[grepl("^[A-Z]", regional_terms)]
+  regional_terms <- regional_terms[stringr::str_count(regional_terms, "\\s+") >= 1]
+
+  if (length(regional_json_files) > 0) {
+    message("Regional dicts: ", length(regional_json_files), " file(s) -> ",
+            length(raw_regional_terms), " raw -> ",
+            length(regional_terms), " kept (proper-noun, multi-word, deduped)")
+  } else {
+    message("No regional dicts found in tijuanabox/int_data/dictionaries/ - ",
+            "run extract_region_dictionaries.py to generate them")
+  }
 } else {
-  message("No regional dicts found in tijuanabox/int_data/dictionaries/ — ",
-          "run extract_region_dictionaries.py to generate them")
+  regional_terms <- character(0)
+  message("Region_Year dicts disabled (use_region_year_dicts = FALSE)")
 }
 
 # --- 3. Compose entity ruler: multi-word terms only ---
@@ -101,6 +124,13 @@ dict_ents <- entity_specify(all_terms,
                             whole_word_only = TRUE,
                             entity_label = "DICT")
 dict_ents <- c(dict_ents, textNet::build_structural_org_patterns())
+
+#length(texts)
+### identical, so can use same index
+#identical(basename(parse_fileloc),names(texts))
+#sub_index <- grep('Region_30',names(texts))
+#texts <- texts[sub_index]
+#parse_fileloc <- parse_fileloc[sub_index]
 
 # === RUN PARSING ===
 parsed <- textNet::parse_text_trf(
@@ -137,20 +167,7 @@ if (any(is.na(group_keys))) {
   group_keys  <- group_keys[!is.na(group_keys)]
 }
 
-projects <- vector(mode = "list", length = length(unique(group_keys)))
-names(projects) <- unique(group_keys)
-
-filenum <- 1
-for (i in seq_along(projects)) {
-  projects[[i]] <- parsed[[filenum]]
-  filenum <- filenum + 1
-  while (filenum <= length(parsed) &&
-         !is.na(group_keys[filenum]) &&
-         group_keys[filenum] == names(projects)[i]) {
-    projects[[i]] <- rbind(projects[[i]], parsed[[filenum]])
-    filenum <- filenum + 1
-  }
-}
+projects <- lapply(split(parsed, group_keys), function(grp) do.call(rbind, grp))
 
 # === EXTRACT NETWORKS ===
 extracts <- vector(mode = "list", length = length(projects))
