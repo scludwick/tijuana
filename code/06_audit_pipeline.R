@@ -22,7 +22,7 @@
 # (one row per page, read via arrow) is the reliable analogue and is used here.
 #
 # Adapted from kings core_code step_audit_pipeline.R.
-# Run from the repo root:  Rscript code/audit_pipeline.R
+# Run from the repo root:  Rscript code/06_audit_pipeline.R
 
 suppressPackageStartupMessages({
   library(data.table)
@@ -34,11 +34,11 @@ suppressPackageStartupMessages({
 
 source("code/utils.R")   # region_year_key(), atomic_write()
 
-pdf_dir       <- "tijuanabox/raw_data/plan_pdfs"
-clean_dir     <- "tijuanabox/int_data/plan_txts_clean"
-extract_dir   <- "tijuanabox/int_data/raw_extracted_networks"
-disambig_dir  <- "tijuanabox/int_data/disambiguated_extracted_networks"
-multiplex_dir <- "tijuanabox/int_data/igraph_objects/multiplex"
+pdf_dir       <- "tijuanabox/core_data/plan_pdfs"
+clean_dir     <- "tijuanabox/core_data/plan_txts_clean"
+extract_dir   <- "tijuanabox/core_data/raw_extracted_networks"
+disambig_dir  <- "tijuanabox/core_data/disambiguated_extracted_networks"
+multiplex_dir <- "tijuanabox/core_data/igraph_objects/multiplex"
 out_csv       <- "output/pipeline_audit.csv"
 
 list_or_empty <- function(d, pat) {

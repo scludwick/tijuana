@@ -17,6 +17,11 @@ suppressPackageStartupMessages({
   library(data.table)
 })
 
+# Pipeline flags + tunables (CLOBBER, TESTING, TESTING_N, MIN_PAGE_CHARS,
+# PARSE_WORKERS, SPACY_ENV) and atomic_write()/atomic_saveRDS() live in
+# _config.R, kings-style. Sourcing utils.R brings them in too.
+source("code/_config.R")
+
 # === Dictionaries ===========================================================
 # Canonical list of curated dictionaries the pipeline knows about. Used by
 # the parse step (entity-ruler patterns) AND the disambiguation step
@@ -118,19 +123,57 @@ build_global_dict <- function(keys = DICT_KEYS) {
             to != from])
 }
 
-# === Atomic writes ==========================================================
-# Long steps that get Ctrl-C'd, run out of disk, or crash mid-write would
-# otherwise leave half-written outputs that satisfy file.exists() and get
-# skipped on the next non-CLOBBER rerun. atomic_write() writes to <out>.tmp
-# and only renames into place on success.
-atomic_write <- function(out_path, writer_fn) {
-  tmp <- paste0(out_path, ".tmp")
-  on.exit(if (file.exists(tmp)) file.remove(tmp), add = TRUE)
-  writer_fn(tmp)
-  if (!file.exists(tmp)) stop("atomic_write: writer_fn did not create ", tmp)
-  file.rename(tmp, out_path)
+# === Acronym mining =========================================================
+# One deterministic acronym miner used by BOTH the parse step (its `name`
+# column enriches the entity ruler) and the disambiguation step (its
+# (name, acronym) pairs become alias->canonical rows). This replaces the
+# Claude-API region-dictionary process for the common case of tabular
+# glossaries + in-text parenthetical definitions.
+#
+#   rawpg_files : raw-pages parquets (newline-preserved) -> front-matter
+#                 acronym tables via extract_front_matter_acronyms()
+#   clean_files : cleaned-text parquets -> parenthetical "Long Form (ACR)"
+#                 definitions via find_intext_acronyms()
+#
+# Returns a unique (name, acronym) data.table. `name` is the full expansion
+# in spaCy concatenated form (underscores), run through clean_entities() so
+# it meets the nodelist surface in the disambiguation step. Front-matter rows
+# win over in-text on an acronym collision (a document's own glossary is most
+# authoritative). Requires textNet + arrow available (loaded by the callers).
+mine_acronyms <- function(clean_files = character(0), rawpg_files = character(0)) {
+  empty <- data.table::data.table(name = character(0), acronym = character(0))
+
+  fm <- data.table::rbindlist(lapply(rawpg_files, function(f) {
+    tp <- arrow::read_parquet(f)$raw_text
+    tp <- tp[!is.na(tp) & nchar(tp) > 0]
+    if (length(tp) == 0L) return(empty)
+    out <- tryCatch(textNet::extract_front_matter_acronyms(tp),
+                    error = function(e) {
+                      warning("extract_front_matter_acronyms failed for ", f,
+                              ": ", conditionMessage(e)); empty })
+    if (is.null(out) || nrow(out) == 0L) empty else out
+  }), fill = TRUE)
+
+  il <- data.table::rbindlist(lapply(clean_files, function(f) {
+    txt <- arrow::read_parquet(f)$text
+    txt <- stringr::str_replace_all(txt, "\\n", " ")
+    txt <- txt[!is.na(txt) & nchar(txt) > 0]
+    if (length(txt) == 0L) return(empty)
+    out <- tryCatch(textNet::find_intext_acronyms(txt),
+                    error = function(e) {
+                      warning("find_intext_acronyms failed for ", f,
+                              ": ", conditionMessage(e)); empty })
+    if (is.null(out) || nrow(out) == 0L) empty else out
+  }), fill = TRUE)
+
+  if (nrow(fm) == 0L && nrow(il) == 0L) return(empty)
+  mined <- unique(rbind(fm, il, fill = TRUE), by = "acronym")  # front-matter wins
+  mined$name    <- textNet::clean_entities(mined$name)
+  mined$acronym <- textNet::clean_entities(mined$acronym)
+  mined <- unique(mined, by = "acronym")
+  mined[nchar(name) > 0 & nchar(acronym) > 0]
 }
 
-atomic_saveRDS <- function(obj, out_path, ...) {
-  atomic_write(out_path, function(p) saveRDS(obj, p, ...))
-}
+# === Atomic writes ==========================================================
+# atomic_write() / atomic_saveRDS() are defined in code/_config.R (sourced
+# at the top of this file).

@@ -29,7 +29,7 @@ Requirements:
         pip install pdf2image
 
 Usage:
-    python3 pdftotext_py.py
+    python3 code/01_pdftotext.py
     (run from the project root, i.e. the folder containing tijuanabox/)
 """
 
@@ -42,12 +42,17 @@ import traceback
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-CLOBBER = False  # Set True to overwrite existing outputs
+# Env-overridable; shares CLOBBER with the R steps' _config.R.
+def _env_bool(name, default=False):
+    v = os.environ.get(name)
+    return default if not v else v.lower() in ("1", "true", "t", "yes", "y")
+
+CLOBBER = _env_bool("CLOBBER")  # CLOBBER=1 to overwrite existing outputs
 
 # Paths — adjust if running from a different working directory
-PDF_DIR       = "tijuanabox/raw_data/plan_pdfs"
-TXT_DIR       = "tijuanabox/int_data/plan_txts_raw"
-RAW_PAGES_DIR = "tijuanabox/int_data/plan_txts_raw_pages"
+PDF_DIR       = "tijuanabox/core_data/plan_pdfs"
+TXT_DIR       = "tijuanabox/core_data/plan_txts_raw"
+RAW_PAGES_DIR = "tijuanabox/core_data/plan_txts_raw_pages"
 
 os.makedirs(TXT_DIR, exist_ok=True)
 os.makedirs(RAW_PAGES_DIR, exist_ok=True)

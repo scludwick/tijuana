@@ -26,19 +26,19 @@
 #     several rows that collapsed to the same canonical).
 #
 # Ported from kings core_code step5_build_igraphs.R.
-# Run from the repo root:  Rscript code/build_igraphs.R
-
-overwrite <- FALSE   # TRUE to rebuild graphs that already exist
+# Run from the repo root:  Rscript code/05_build_igraphs.R
+# CLOBBER (from code/_config.R, via utils.R) rebuilds graphs that already
+# exist. Override from the shell: CLOBBER=1 Rscript code/05_build_igraphs.R
 
 library(igraph)
 library(stringr)
 library(data.table)
 
-source("code/utils.R")   # atomic_saveRDS()
+source("code/utils.R")   # atomic_saveRDS(); sources _config.R (CLOBBER)
 
-disambig_dir  <- "tijuanabox/int_data/disambiguated_extracted_networks"
-multiplex_dir <- "tijuanabox/int_data/igraph_objects/multiplex"
-uniplex_dir   <- "tijuanabox/int_data/igraph_objects/uniplex"
+disambig_dir  <- "tijuanabox/core_data/disambiguated_extracted_networks"
+multiplex_dir <- "tijuanabox/core_data/igraph_objects/multiplex"
+uniplex_dir   <- "tijuanabox/core_data/igraph_objects/uniplex"
 dir.create(multiplex_dir, recursive = TRUE, showWarnings = FALSE)
 dir.create(uniplex_dir,   recursive = TRUE, showWarnings = FALSE)
 
@@ -123,7 +123,7 @@ for (f in disambig_files) {
   multiplex_path <- file.path(multiplex_dir, paste0(stem, ".RDS"))
   uniplex_path   <- file.path(uniplex_dir,   paste0(stem, ".RDS"))
 
-  if (!overwrite && file.exists(multiplex_path) && file.exists(uniplex_path)) {
+  if (!CLOBBER && file.exists(multiplex_path) && file.exists(uniplex_path)) {
     skipped <- skipped + 1L
     next
   }

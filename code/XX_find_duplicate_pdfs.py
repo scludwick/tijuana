@@ -8,7 +8,7 @@ Does NOT delete anything — review the output and remove duplicates manually
 or with the --delete flag (see below).
 
 Output:
-    tijuanabox/raw_data/duplicate_pdfs.csv
+    tijuanabox/core_data/duplicate_pdfs.csv
     Columns: hash, keep, duplicate, region_year
 
 Usage:
@@ -25,8 +25,8 @@ import re
 import sys
 from collections import defaultdict
 
-PDF_DIR    = "tijuanabox/raw_data/plan_pdfs"
-REPORT_CSV = "tijuanabox/raw_data/duplicate_pdfs.csv"
+PDF_DIR    = "tijuanabox/core_data/plan_pdfs"
+REPORT_CSV = "tijuanabox/core_data/duplicate_pdfs.csv"
 
 REGION_YEAR_RE = re.compile(r"^Region_(\d+)\s*_\s*(\d{4})")
 

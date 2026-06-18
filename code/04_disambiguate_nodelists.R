@@ -31,11 +31,9 @@
 #       gains raw_entity_name preserving the pre-disambig surface form.
 #   disambiguated_extracts.RDS  (combined list, parity with raw_extracts.RDS)
 #
-# Run from the repo root:  Rscript code/disambiguate_nodelists.R
-
-overwrite <- FALSE   # TRUE to rebuild extracts that already have output
-testing   <- FALSE   # TRUE to process a fixed small subset of Region_Years
-TESTING_N <- 2L
+# Run from the repo root:  Rscript code/04_disambiguate_nodelists.R
+# Flags (CLOBBER, TESTING, TESTING_N) come from code/_config.R (sourced via
+# utils.R). Override from the shell, e.g. CLOBBER=1 Rscript code/04_*.R
 
 library(stringr)
 library(data.table)
@@ -46,10 +44,10 @@ source("code/utils.R")   # DICT_KEYS, build_global_dict(), region_year_key(),
                          # clean_entities() helpers, atomic_saveRDS()
 
 # === Paths ===
-raw_dir        <- "tijuanabox/int_data/raw_extracted_networks"
-clean_dir      <- "tijuanabox/int_data/plan_txts_clean"
-raw_pages_dir  <- "tijuanabox/int_data/plan_txts_raw_pages"
-out_dir        <- "tijuanabox/int_data/disambiguated_extracted_networks"
+raw_dir        <- "tijuanabox/core_data/raw_extracted_networks"
+clean_dir      <- "tijuanabox/core_data/plan_txts_clean"
+raw_pages_dir  <- "tijuanabox/core_data/plan_txts_raw_pages"
+out_dir        <- "tijuanabox/core_data/disambiguated_extracted_networks"
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
 try_drop <- "^US_|^U_S_|^United_States_|^UnitedStates_"
@@ -69,13 +67,13 @@ if (length(extract_files) == 0L) {
 ry_keys   <- sub("^extract_", "", str_remove(basename(extract_files), "\\.RDS$"))
 out_paths <- file.path(out_dir, basename(extract_files))
 
-todo_idx <- if (overwrite) seq_along(extract_files) else which(!file.exists(out_paths))
+todo_idx <- if (CLOBBER) seq_along(extract_files) else which(!file.exists(out_paths))
 n_skipped <- length(extract_files) - length(todo_idx)
 if (n_skipped > 0L) {
   message("Skipping ", n_skipped, " Region_Year(s) with existing disambiguated ",
-          "extracts (set overwrite <- TRUE to rebuild).")
+          "extracts (set CLOBBER=1 to rebuild).")
 }
-if (testing && length(todo_idx) > 0L) {
+if (TESTING && length(todo_idx) > 0L) {
   n <- min(TESTING_N, length(todo_idx))
   message("TESTING mode: using ", n, " of ", length(todo_idx), " to-do Region_Year(s)")
   todo_idx <- todo_idx[seq_len(n)]
@@ -93,23 +91,18 @@ global_dict <- build_global_dict()
 message("  global_dict: ", nrow(global_dict), " alias->canonical pair(s)")
 
 # === Acronym mining (per Region_Year) ===
-# Two complementary sources, mirroring kings step4:
-#   - extract_front_matter_acronyms() on the newline-preserved raw pages
-#     (front-matter glossary tables: "ACR    Long Form" column layout)
-#   - find_intext_acronyms() on the cleaned text (parenthetical defs:
-#     "Long Form (ACR)")
-# rbind front-matter first so it wins on the unique(by="acronym") dedupe —
-# a document's own glossary is the most authoritative source. Both are mined
-# per member PDF, then pooled across the Region_Year.
-empty_acronyms <- function() data.table(name = character(0), acronym = character(0))
-
+# Uses the shared mine_acronyms() in utils.R (extract_front_matter_acronyms()
+# on the raw pages + find_intext_acronyms() on the clean text, front-matter
+# winning on collision). The same function feeds the parse step's entity
+# ruler, so the two stages stay in sync from one implementation. Here we gather
+# the Region_Year's member PDFs and pass their parquets to the miner.
 mine_acronyms_for_ry <- function(ry) {
   clean_files <- list.files(clean_dir, pattern = "\\.parquet$", full.names = TRUE)
-  clean_files <- clean_files[region_year_key(clean_files) == ry]
-  clean_files <- clean_files[!is.na(clean_files)]
+  clean_files <- clean_files[!is.na(region_year_key(clean_files)) &
+                             region_year_key(clean_files) == ry]
   rawpg_files <- list.files(raw_pages_dir, pattern = "\\.parquet$", full.names = TRUE)
-  rawpg_files <- rawpg_files[region_year_key(rawpg_files) == ry]
-  rawpg_files <- rawpg_files[!is.na(rawpg_files)]
+  rawpg_files <- rawpg_files[!is.na(region_year_key(rawpg_files)) &
+                             region_year_key(rawpg_files) == ry]
 
   if (length(clean_files) == 0L) {
     warning("No cleaned parquet(s) for ", ry, " in ", clean_dir,
@@ -117,41 +110,11 @@ mine_acronyms_for_ry <- function(ry) {
   }
   if (length(rawpg_files) == 0L) {
     warning("No raw-pages parquet(s) for ", ry, " in ", raw_pages_dir,
-            " — front-matter acronyms skipped. Re-run code/pdftotext.py to ",
+            " — front-matter acronyms skipped. Re-run code/01_pdftotext.py to ",
             "populate raw pages.")
   }
 
-  # Front-matter tables (need newline-preserved raw pages), per PDF.
-  fm <- rbindlist(lapply(rawpg_files, function(f) {
-    tp <- arrow::read_parquet(f)$raw_text
-    tp <- tp[!is.na(tp) & nchar(tp) > 0]
-    if (length(tp) == 0L) return(empty_acronyms())
-    out <- tryCatch(extract_front_matter_acronyms(tp),
-                    error = function(e) {
-                      warning("extract_front_matter_acronyms failed for ", f,
-                              ": ", conditionMessage(e)); empty_acronyms() })
-    if (is.null(out) || nrow(out) == 0L) empty_acronyms() else out
-  }), fill = TRUE)
-
-  # In-text parenthetical defs from the cleaned text, per PDF.
-  il <- rbindlist(lapply(clean_files, function(f) {
-    txt <- arrow::read_parquet(f)$text
-    txt <- str_replace_all(txt, "\\n", " ")
-    txt <- txt[!is.na(txt) & nchar(txt) > 0]
-    if (length(txt) == 0L) return(empty_acronyms())
-    out <- tryCatch(find_intext_acronyms(txt),
-                    error = function(e) {
-                      warning("find_intext_acronyms failed for ", f,
-                              ": ", conditionMessage(e)); empty_acronyms() })
-    if (is.null(out) || nrow(out) == 0L) empty_acronyms() else out
-  }), fill = TRUE)
-
-  if (nrow(fm) == 0L && nrow(il) == 0L) return(empty_acronyms())
-  mined <- unique(rbind(fm, il, fill = TRUE), by = "acronym")
-  mined$name    <- clean_entities(mined$name)
-  mined$acronym <- clean_entities(mined$acronym)
-  mined <- unique(mined, by = "acronym")
-  mined[nchar(name) > 0 & nchar(acronym) > 0]
+  mine_acronyms(clean_files, rawpg_files)
 }
 
 # === Build per-Region_Year customdt + resolve duplicate `from` keys ===
@@ -235,5 +198,5 @@ all_out <- file.path(out_dir, paste0("extract_", ry_keys, ".RDS"))
 have    <- file.exists(all_out)
 combined <- lapply(all_out[have], readRDS)
 names(combined) <- ry_keys[have]
-saveRDS(combined, "tijuanabox/int_data/disambiguated_extracts.RDS")
+saveRDS(combined, "tijuanabox/core_data/disambiguated_extracts.RDS")
 message("Done. ", sum(have), " disambiguated extract(s) on disk.")

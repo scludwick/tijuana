@@ -4,3 +4,5 @@
 .Ruserdata
 tijuana.Rproj
 tijuanabox
+__pycache__/
+*.pyc

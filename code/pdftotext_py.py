@@ -46,8 +46,8 @@ import traceback
 CLOBBER = False  # Set True to overwrite existing txt files
 
 # Paths — adjust if running from a different working directory
-PDF_DIR = "tijuanabox/raw_data/plan_pdfs"
-TXT_DIR = "tijuanabox/int_data/plan_txts_raw"
+PDF_DIR = "tijuanabox/core_data/plan_pdfs"
+TXT_DIR = "tijuanabox/core_data/plan_txts_raw"
 
 os.makedirs(TXT_DIR, exist_ok=True)
 

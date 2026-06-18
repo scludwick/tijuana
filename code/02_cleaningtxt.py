@@ -4,8 +4,8 @@ cleaningtxt.py
 Filters non-prose pages from raw text files before NER processing.
 Python port of cleaningtxt.R, adapted from the salinas project.
 
-Reads:  tijuanabox/int_data/plan_txts_raw/*.txt   (TSV: page\ttext)
-Writes: tijuanabox/int_data/plan_txts_clean/*.parquet
+Reads:  tijuanabox/core_data/plan_txts_raw/*.txt   (TSV: page\ttext)
+Writes: tijuanabox/core_data/plan_txts_clean/*.parquet
 
 Pages failing any density threshold have their text set to an empty string
 rather than being removed. Page numbers are preserved so downstream code
@@ -31,13 +31,25 @@ import traceback
 
 import pandas as pd
 
-# === FLAGS ===
-CLOBBER = False   # Set True to re-clean already-processed files
-TESTING = False   # Set True to process first 5 files only
+# === FLAGS (env-overridable; shares CLOBBER/TESTING with the R steps' _config.R) ===
+def _env_bool(name, default=False):
+    v = os.environ.get(name)
+    return default if not v else v.lower() in ("1", "true", "t", "yes", "y")
+
+def _env_int(name, default):
+    v = os.environ.get(name)
+    try:
+        return int(v) if v else default
+    except ValueError:
+        return default
+
+CLOBBER   = _env_bool("CLOBBER")    # CLOBBER=1 re-cleans already-processed files
+TESTING   = _env_bool("TESTING")    # TESTING=1 processes first TESTING_N files
+TESTING_N = _env_int("TESTING_N", 5)
 
 # === PATHS ===
-RAW_DIR   = "tijuanabox/int_data/plan_txts_raw"
-CLEAN_DIR = "tijuanabox/int_data/plan_txts_clean"
+RAW_DIR   = "tijuanabox/core_data/plan_txts_raw"
+CLEAN_DIR = "tijuanabox/core_data/plan_txts_clean"
 
 os.makedirs(CLEAN_DIR, exist_ok=True)
 
@@ -85,7 +97,7 @@ files = sorted(f for f in os.listdir(RAW_DIR) if f.endswith(".txt"))
 print(f"Files in plan_txts_raw/: {len(files)}")
 
 if TESTING:
-    files = files[:5]
+    files = files[:TESTING_N]
     print(f"TESTING mode: processing {len(files)} file(s)")
 
 cleaned = skipped = failed = 0
