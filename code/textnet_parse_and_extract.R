@@ -12,6 +12,8 @@ library(stringr)
 library(jsonlite)
 library(arrow)
 
+source("code/utils.R")   # DICT_KEYS, dict_path(), load_dict_terms()
+
 # === PYTHON / spaCy ENV ===
 ret_path <- grep("spacy-env", reticulate::conda_list()$python, value = TRUE)
 
@@ -62,16 +64,14 @@ parse_fileloc <- paste0("tijuanabox/int_data/parsed_files/", basename(files))
 
 # === ENTITY RULER BUILD ===
 
-# --- 1. Centralized dictionaries (water entities, infrastructure, water bodies) ---
-dict_csvs <- c(
-  "output/water_entity_dictionary.csv",
-  "output/water_infrastructure_dictionary.csv",
-  "output/water_bodies_dictionary.csv"
-)
-global_terms <- unlist(lapply(dict_csvs, function(f) {
-  d <- read.csv(f, stringsAsFactors = FALSE)
-  unlist(strsplit(d$all_names, split = "|", fixed = TRUE))
-}))
+# --- 1. Centralized dictionaries (all six in code/dicts/) ---
+# DICT_KEYS and the schema-aware loader live in code/utils.R so this step and
+# the disambiguation step stay in sync. load_dict_terms() handles both the
+# `all_names` pipe-delimited schema (the five water/utility dicts) and the
+# (State, Agency, Abbr) schema (gov_entities_dict). Every canonical + alias
+# becomes a candidate entity-ruler term; the multi-word filter below trims
+# single-token entries.
+global_terms <- unlist(lapply(DICT_KEYS, function(k) load_dict_terms(dict_path(k))))
 
 # --- 2. Per-Region_Year dictionaries extracted from document glossary/acronym sections ---
 regional_json_files <- list.files("tijuanabox/int_data/dictionaries",

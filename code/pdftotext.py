@@ -1,10 +1,17 @@
 """
 pdftotext.py
 ---------------
-converts all PDFs in plan_pdfs/ to
-tab-separated text files in plan_txts_raw/, one row per page.
+converts all PDFs in plan_pdfs/ to:
+  1. tab-separated text files in plan_txts_raw/, one row per page
+     (page\ttext) — primary input for cleaningtxt.py.
+  2. per-page parquet files in plan_txts_raw_pages/ (page, raw_text) with
+     newlines and multi-space column gaps PRESERVED. This mirrors kings
+     step1's raw-pages artifact and is consumed by the disambiguation step's
+     extract_front_matter_acronyms() path, which needs the original
+     "ACR    Long Form" front-matter table layout (the TSV above strips that
+     structure once cleaningtxt.py collapses whitespace).
 
-Output format (matches pdftotext.R):
+Output format (TSV, matches pdftotext.R):
     page\ttext
 
 Extraction engine:
@@ -32,13 +39,18 @@ import subprocess
 import shutil
 import traceback
 
-CLOBBER = False  # Set True to overwrite existing txt files
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+CLOBBER = False  # Set True to overwrite existing outputs
 
 # Paths — adjust if running from a different working directory
-PDF_DIR = "tijuanabox/raw_data/plan_pdfs"
-TXT_DIR = "tijuanabox/int_data/plan_txts_raw"
+PDF_DIR       = "tijuanabox/raw_data/plan_pdfs"
+TXT_DIR       = "tijuanabox/int_data/plan_txts_raw"
+RAW_PAGES_DIR = "tijuanabox/int_data/plan_txts_raw_pages"
 
 os.makedirs(TXT_DIR, exist_ok=True)
+os.makedirs(RAW_PAGES_DIR, exist_ok=True)
 
 # Verify pdftotext is available
 if not shutil.which("pdftotext"):
@@ -105,8 +117,22 @@ def write_tsv(pages, txt_path):
             writer.writerow([i, text])
 
 
+def write_raw_pages(pages, parquet_path):
+    """Write the raw page text to parquet, one row per page, with newlines and
+    multi-space column gaps PRESERVED. Read in R via
+    arrow::read_parquet(path)$raw_text -> a character vector (one element per
+    page), the input shape extract_front_matter_acronyms() expects.
+    """
+    table = pa.table({
+        "page": list(range(1, len(pages) + 1)),
+        "raw_text": list(pages),
+    })
+    pq.write_table(table, parquet_path)
+
+
 # ── Orphan cleanup ───────────────────────────────────────────────────────────
-# Delete any .txt file in plan_txts_raw/ whose source PDF no longer exists.
+# Delete any output file whose source PDF no longer exists (both the .txt TSV
+# and the .parquet raw-pages artifact).
 
 pdf_stems = set()
 for fname in os.listdir(PDF_DIR):
@@ -118,14 +144,21 @@ deleted = 0
 for txt_fname in sorted(os.listdir(TXT_DIR)):
     if not txt_fname.endswith(".txt"):
         continue
-    stem = txt_fname[:-4]
-    if stem not in pdf_stems:
+    if txt_fname[:-4] not in pdf_stems:
         os.remove(os.path.join(TXT_DIR, txt_fname))
         print(f"  Removed orphan: {txt_fname}")
         deleted += 1
 
+for pq_fname in sorted(os.listdir(RAW_PAGES_DIR)):
+    if not pq_fname.endswith(".parquet"):
+        continue
+    if pq_fname[:-8] not in pdf_stems:
+        os.remove(os.path.join(RAW_PAGES_DIR, pq_fname))
+        print(f"  Removed orphan: {pq_fname}")
+        deleted += 1
+
 if deleted:
-    print(f"Removed {deleted} orphaned text file(s).\n")
+    print(f"Removed {deleted} orphaned output file(s).\n")
 
 # ── Main loop ────────────────────────────────────────────────────────────────
 
@@ -148,9 +181,12 @@ for fname in files:
     # Strip .pdf extension for the output filename stem
     stem = fname[:-4] if fname.lower().endswith(".pdf") else fname
     # Note: all expected files end in .pdf; magic bytes check above catches anything else
-    txt_path = os.path.join(TXT_DIR, stem + ".txt")
+    txt_path       = os.path.join(TXT_DIR, stem + ".txt")
+    raw_pages_path = os.path.join(RAW_PAGES_DIR, stem + ".parquet")
 
-    if os.path.exists(txt_path) and not CLOBBER:
+    # Skip only when BOTH outputs exist, so a rerun backfills the raw-pages
+    # parquet for PDFs converted before this artifact was added.
+    if os.path.exists(txt_path) and os.path.exists(raw_pages_path) and not CLOBBER:
         skipped += 1
         continue
 
@@ -165,7 +201,9 @@ for fname in files:
 
         if pages:
             write_tsv(pages, txt_path)
-            print(f"    → {len(pages)} pages → {os.path.basename(txt_path)}")
+            write_raw_pages(pages, raw_pages_path)
+            print(f"    → {len(pages)} pages → {os.path.basename(txt_path)} "
+                  f"+ {os.path.basename(raw_pages_path)}")
             converted += 1
         else:
             print("    → SKIP: no text extracted (may need manual OCR)")
