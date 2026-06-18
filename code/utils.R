@@ -140,38 +140,60 @@ build_global_dict <- function(keys = DICT_KEYS) {
 # it meets the nodelist surface in the disambiguation step. Front-matter rows
 # win over in-text on an acronym collision (a document's own glossary is most
 # authoritative). Requires textNet + arrow available (loaded by the callers).
-mine_acronyms <- function(clean_files = character(0), rawpg_files = character(0)) {
-  empty <- data.table::data.table(name = character(0), acronym = character(0))
+#
+# The miner is split into three composable pieces so a caller that already has
+# the cleaned text in memory (the parse step) can mine in-text acronyms without
+# re-reading the parquets:
+#   mine_frontmatter_acronyms(rawpg_files) : reads raw-pages parquets
+#   mine_intext_acronyms(text_list)        : operates on already-loaded text
+#   combine_acronyms(fm, il)               : dedupe + clean (front-matter wins)
+# mine_acronyms(clean_files, rawpg_files) is the file-based convenience wrapper
+# (used by the disambiguation step).
+.empty_acronyms <- function() data.table::data.table(name = character(0),
+                                                     acronym = character(0))
 
-  fm <- data.table::rbindlist(lapply(rawpg_files, function(f) {
+mine_frontmatter_acronyms <- function(rawpg_files = character(0)) {
+  data.table::rbindlist(lapply(rawpg_files, function(f) {
     tp <- arrow::read_parquet(f)$raw_text
     tp <- tp[!is.na(tp) & nchar(tp) > 0]
-    if (length(tp) == 0L) return(empty)
+    if (length(tp) == 0L) return(.empty_acronyms())
     out <- tryCatch(textNet::extract_front_matter_acronyms(tp),
                     error = function(e) {
                       warning("extract_front_matter_acronyms failed for ", f,
-                              ": ", conditionMessage(e)); empty })
-    if (is.null(out) || nrow(out) == 0L) empty else out
+                              ": ", conditionMessage(e)); .empty_acronyms() })
+    if (is.null(out) || nrow(out) == 0L) .empty_acronyms() else out
   }), fill = TRUE)
+}
 
-  il <- data.table::rbindlist(lapply(clean_files, function(f) {
-    txt <- arrow::read_parquet(f)$text
+# text_list: a list (or vector) of character vectors of page text. Newlines are
+# collapsed here, so callers may pass either raw or already-collapsed text.
+mine_intext_acronyms <- function(text_list) {
+  if (is.character(text_list)) text_list <- list(text_list)
+  data.table::rbindlist(lapply(text_list, function(txt) {
     txt <- stringr::str_replace_all(txt, "\\n", " ")
     txt <- txt[!is.na(txt) & nchar(txt) > 0]
-    if (length(txt) == 0L) return(empty)
+    if (length(txt) == 0L) return(.empty_acronyms())
     out <- tryCatch(textNet::find_intext_acronyms(txt),
                     error = function(e) {
-                      warning("find_intext_acronyms failed for ", f,
-                              ": ", conditionMessage(e)); empty })
-    if (is.null(out) || nrow(out) == 0L) empty else out
+                      warning("find_intext_acronyms failed: ",
+                              conditionMessage(e)); .empty_acronyms() })
+    if (is.null(out) || nrow(out) == 0L) .empty_acronyms() else out
   }), fill = TRUE)
+}
 
-  if (nrow(fm) == 0L && nrow(il) == 0L) return(empty)
+combine_acronyms <- function(fm, il) {
+  if (nrow(fm) == 0L && nrow(il) == 0L) return(.empty_acronyms())
   mined <- unique(rbind(fm, il, fill = TRUE), by = "acronym")  # front-matter wins
   mined$name    <- textNet::clean_entities(mined$name)
   mined$acronym <- textNet::clean_entities(mined$acronym)
   mined <- unique(mined, by = "acronym")
   mined[nchar(name) > 0 & nchar(acronym) > 0]
+}
+
+mine_acronyms <- function(clean_files = character(0), rawpg_files = character(0)) {
+  fm <- mine_frontmatter_acronyms(rawpg_files)
+  il <- mine_intext_acronyms(lapply(clean_files, function(f) arrow::read_parquet(f)$text))
+  combine_acronyms(fm, il)
 }
 
 # === Atomic writes ==========================================================

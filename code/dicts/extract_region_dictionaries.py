@@ -47,8 +47,8 @@ def _env_bool(name, default=False):
     v = os.environ.get(name)
     return default if not v else v.lower() in ("1", "true", "t", "yes", "y")
 
-TESTING = _env_bool("TESTING")        # TESTING=1 restricts to a small subset
-CLOBBER = _env_bool("CLOBBER", True)  # CLOBBER=0 to skip existing dict files
+TESTING = _env_bool("TESTING")   # TESTING=1 restricts to a small subset
+CLOBBER = _env_bool("CLOBBER")   # CLOBBER=1 to overwrite existing dict files
 
 # === PATHS ===
 TXT_DIR  = "tijuanabox/core_data/plan_txts_raw"

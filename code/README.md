@@ -163,9 +163,9 @@ TESTING=1 TESTING_N=3 Rscript code/03_textnet_parse_and_extract.R
 CLOBBER=1 python3 code/01_pdftotext.py
 ```
 
-(`extract_region_dictionaries.py` defaults `CLOBBER` to TRUE and has its own
-`TEST_N_REGIONS` / `TEST_MAX_FILES` subset knobs; set `CLOBBER=0` to skip
-existing dict files.)
+(`extract_region_dictionaries.py` honors `CLOBBER` (default FALSE — set
+`CLOBBER=1` to overwrite existing dict files) and has its own `TEST_N_REGIONS`
+/ `TEST_MAX_FILES` subset knobs.)
 
 `_config.R` also defines crash-safe `atomic_write()` / `atomic_saveRDS()` (outputs
 go to a `.tmp` file and are renamed on success, so an interrupted run never leaves
