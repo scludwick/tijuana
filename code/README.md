@@ -5,7 +5,10 @@ Water Management (IRWM) plan PDFs using spaCy (via textNet). The pipeline runs
 stage by stage. All pipeline data — source PDFs, intermediate artifacts, and
 outputs — lives under `tijuanabox/core_data/` (Box Drive, symlinked from the repo
 root), mirroring the kings `data/core_data` layout (the older `raw_data/` +
-`int_data/` split has been consolidated into this single `core_data/`).
+`int_data/` split has been consolidated into this single `core_data/`). For a
+map of those data folders see `tijuanabox/core_data/README.md`; for data
+provenance and acquisition notes see `tijuanabox/README.txt`. This README covers
+the code/pipeline only.
 
 The unit of analysis is **Region_Year** (e.g., `Region_7_2020`). Individual PDFs
 are processed independently through PDF extraction and cleaning, then grouped by
@@ -156,6 +159,8 @@ the whole pipeline.
 | `MIN_PAGE_CHARS` | `MIN_PAGE_CHARS` | `200` | 03 (drop short pages before parsing) |
 | `PARSE_WORKERS` | `PARSE_WORKERS` | `1` | 03 (`cl` passed to `textnet_extract`) |
 | `SPACY_ENV` | `SPACY_ENV` | `"spacy-env"` | 03 (conda env name or python binary path) |
+| `WRITE_TRIES` | `WRITE_TRIES` | `6` | 01, 02, R `atomic_write` (retry count for cloud-FS write timeouts) |
+| `WRITE_BASE_DELAY` | `WRITE_BASE_DELAY` | `3` | 01, 02, R `atomic_write` (backoff base seconds: 3,6,12,24,48) |
 
 ```bash
 CLOBBER=1 Rscript code/04_disambiguate_nodelists.R           # rebuild everything
