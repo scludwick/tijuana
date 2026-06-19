@@ -113,6 +113,7 @@ build_graphs <- function(edgenodelist) {
 }
 
 disambig_files <- list.files(disambig_dir, pattern = "\\.RDS$", full.names = TRUE)
+disambig_files <- testing_filter(disambig_files)   # first TESTING_N Region_Years when TESTING
 cat(sprintf("Found %d disambiguated extract(s) in %s\n",
             length(disambig_files), disambig_dir))
 

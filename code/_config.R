@@ -36,7 +36,10 @@
 # FALSE so reruns are cheap.
 CLOBBER   <- .env_bool("CLOBBER", FALSE)
 
-# TESTING: restrict to the first TESTING_N input units for a fast smoke test.
+# TESTING: restrict the whole pipeline to the first TESTING_N Region_Years
+# (sorted) for a fast, coherent end-to-end smoke test. Every step funnels its
+# input through testing_filter() (R, in utils.R) or the equivalent region-year
+# filter (Python steps 01/02), so the same Region_Years flow through all steps.
 TESTING   <- .env_bool("TESTING", FALSE)
 TESTING_N <- .env_int("TESTING_N", 5L)
 
@@ -61,12 +64,34 @@ SPACY_ENV <- Sys.getenv("SPACY_ENV", unset = "spacy-env")
 # otherwise leave half-written outputs that satisfy file.exists() and get
 # skipped on the next non-CLOBBER rerun. atomic_write() writes to <out>.tmp
 # and only renames into place on success.
+#
+# WRITE_TRIES / WRITE_BASE_DELAY add retry-with-backoff so a cloud-filesystem
+# I/O timeout (Box File Provider can return ETIMEDOUT under write load) is
+# retried instead of aborting the file. Waits ~3,6,12,24,48s across 6 attempts.
+WRITE_TRIES      <- .env_int("WRITE_TRIES", 6L)
+WRITE_BASE_DELAY <- .env_int("WRITE_BASE_DELAY", 3L)
+
 atomic_write <- function(out_path, writer_fn) {
   tmp <- paste0(out_path, ".tmp")
-  on.exit(if (file.exists(tmp)) file.remove(tmp), add = TRUE)
-  writer_fn(tmp)
-  if (!file.exists(tmp)) stop("atomic_write: writer_fn did not create ", tmp)
-  file.rename(tmp, out_path)
+  for (attempt in seq_len(WRITE_TRIES)) {
+    res <- tryCatch({
+      if (file.exists(tmp)) file.remove(tmp)
+      writer_fn(tmp)
+      if (!file.exists(tmp)) stop("atomic_write: writer_fn did not create ", tmp)
+      if (!file.rename(tmp, out_path)) stop("atomic_write: rename failed for ", out_path)
+      TRUE
+    }, error = function(e) e)
+    if (isTRUE(res)) return(invisible(TRUE))
+    if (attempt == WRITE_TRIES) {
+      if (file.exists(tmp)) try(file.remove(tmp), silent = TRUE)
+      stop(res)
+    }
+    wait <- WRITE_BASE_DELAY * 2^(attempt - 1)
+    message(sprintf("  I/O error writing %s (%s) — retry %d/%d in %.0fs",
+                    basename(out_path), conditionMessage(res),
+                    attempt, WRITE_TRIES - 1L, wait))
+    Sys.sleep(wait)
+  }
 }
 
 atomic_saveRDS <- function(obj, out_path, ...) {

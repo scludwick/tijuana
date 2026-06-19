@@ -126,7 +126,7 @@ Run it from the repo root:
 ./code/run_pipeline.sh 03 04            # subset, in the given order (prefix or full name)
 ./code/run_pipeline.sh --with-scrape    # prepend 00_scraping.R
 ./code/run_pipeline.sh --clobber        # CLOBBER=1 everywhere
-./code/run_pipeline.sh --testing        # TESTING=1 (first TESTING_N units)
+./code/run_pipeline.sh --testing        # TESTING=1 (first TESTING_N Region_Years, end-to-end)
 ./code/run_pipeline.sh --no-audit       # skip the audit at the end
 
 nohup ./code/run_pipeline.sh --with-scrape &   # detach; survives logout
@@ -151,8 +151,8 @@ the whole pipeline.
 | Env var | R variable | Default | Used by |
 |---|---|---|---|
 | `CLOBBER` | `CLOBBER` | `FALSE` | 01–05 (re-run even if output exists) |
-| `TESTING` | `TESTING` | `FALSE` | 02, 03, 04 (restrict to a small subset) |
-| `TESTING_N` | `TESTING_N` | `5` | 02, 03, 04 (subset size) |
+| `TESTING` | `TESTING` | `FALSE` | 01–05 (restrict to the first TESTING_N Region_Years) |
+| `TESTING_N` | `TESTING_N` | `5` | 01–05 (number of Region_Years in the TESTING subset) |
 | `MIN_PAGE_CHARS` | `MIN_PAGE_CHARS` | `200` | 03 (drop short pages before parsing) |
 | `PARSE_WORKERS` | `PARSE_WORKERS` | `1` | 03 (`cl` passed to `textnet_extract`) |
 | `SPACY_ENV` | `SPACY_ENV` | `"spacy-env"` | 03 (conda env name or python binary path) |

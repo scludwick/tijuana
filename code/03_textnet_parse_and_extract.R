@@ -35,6 +35,11 @@ if (is.na(ret_path) || !nzchar(ret_path)) {
 files <- list.files(path = "tijuanabox/core_data/plan_txts_clean",
                     pattern = "\\.parquet$", full.names = TRUE)
 
+# TESTING: restrict to the first TESTING_N Region_Years (no-op otherwise). Done
+# up front so everything below — clean text, ruler mining, parse, extract — is
+# bounded to the same subset.
+files <- testing_filter(files)
+
 clean_texts <- lapply(files, function(i) str_replace_all(arrow::read_parquet(i)$text, "\\n", " "))
 names(clean_texts) <- basename(files)
 
@@ -43,22 +48,12 @@ texts <- lapply(clean_texts, function(tmp) tmp[!is.na(tmp) & nchar(tmp) > MIN_PA
 names(texts) <- basename(files)
 
 # Remove files with no usable text to keep texts/files/parse_fileloc aligned.
-# clean_texts is kept complete so the entity ruler is mined corpus-wide below.
 empty_texts <- sapply(texts, length) == 0
 if (any(empty_texts)) {
   message("Removing ", sum(empty_texts), " file(s) with no text >", MIN_PAGE_CHARS,
           " chars: ", paste(basename(files[empty_texts]), collapse = ", "))
   files <- files[!empty_texts]
   texts <- texts[!empty_texts]
-}
-
-# Testing mode: restrict the PARSE set to the first TESTING_N files. The ruler is
-# still mined from the full corpus (clean_texts), so test and full runs share it.
-if (TESTING) {
-  n <- min(TESTING_N, length(files))
-  message("TESTING mode: using ", n, " of ", length(files), " file(s)")
-  files <- files[seq_len(n)]
-  texts <- texts[seq_len(n)]
 }
 
 # === PARTIES ===
@@ -149,12 +144,12 @@ parsed <- textNet::parse_text_trf(
 )
 
 # === GROUP BY REGION_YEAR ===
-# Group parsed files by their Region_Year key (via the shared region_year_key()
-# helper, which also normalizes legacy Region_X__YYYY). Grouping is by key, not
-# by file order — split() collects each Region_Year's files regardless of how
-# list.files() happens to sort them.
-parsed_files <- list.files("tijuanabox/core_data/parsed_files",
-                           pattern = "\\.parquet$", full.names = TRUE)
+# Group by Region_Year key (via region_year_key(); also normalizes legacy
+# Region_X__YYYY). Grouping is by key, not by file order — split() collects each
+# Region_Year's files regardless of how they sort. We group only the files
+# parsed in THIS run (parse_fileloc), not everything in parsed_files/, so a
+# TESTING run stays bounded and stale leftovers never leak into the extract.
+parsed_files <- parse_fileloc[file.exists(parse_fileloc)]
 parsed     <- lapply(parsed_files, textNet::read_parsed_trf)
 group_keys <- region_year_key(parsed_files)
 

@@ -54,6 +54,7 @@ try_drop <- "^US_|^U_S_|^United_States_|^UnitedStates_"
 
 # === Enumerate inputs / to-do subset ===
 extract_files <- sort(list.files(raw_dir, pattern = "\\.RDS$", full.names = TRUE))
+extract_files <- testing_filter(extract_files)   # first TESTING_N Region_Years when TESTING
 if (length(extract_files) == 0L) {
   stop("No extracts found in ", raw_dir,
        ". Run code/textnet_parse_and_extract.R first.")
@@ -72,11 +73,6 @@ n_skipped <- length(extract_files) - length(todo_idx)
 if (n_skipped > 0L) {
   message("Skipping ", n_skipped, " Region_Year(s) with existing disambiguated ",
           "extracts (set CLOBBER=1 to rebuild).")
-}
-if (TESTING && length(todo_idx) > 0L) {
-  n <- min(TESTING_N, length(todo_idx))
-  message("TESTING mode: using ", n, " of ", length(todo_idx), " to-do Region_Year(s)")
-  todo_idx <- todo_idx[seq_len(n)]
 }
 if (length(todo_idx) == 0L) {
   message("Nothing to do; all disambiguated extracts already present.")

@@ -60,6 +60,20 @@ region_year_key <- function(x) {
   stringr::str_extract(b, "Region_[^_]+_[0-9]{4}")
 }
 
+# TESTING subset helper. When TESTING is on (from _config.R), restrict a vector
+# of file paths to those belonging to the first TESTING_N Region_Years (sorted),
+# so a --testing run is a coherent end-to-end smoke test on a few complete
+# Region_Year networks. No-op when TESTING is off. Every R step funnels its
+# input file list through this so the subset is identical across steps.
+testing_filter <- function(paths) {
+  if (!isTRUE(TESTING)) return(paths)
+  ry   <- region_year_key(paths)
+  keep <- head(sort(unique(ry[!is.na(ry)])), TESTING_N)
+  message("TESTING: restricting to ", length(keep), " Region_Year(s): ",
+          paste(keep, collapse = ", "))
+  paths[!is.na(ry) & ry %in% keep]
+}
+
 # Normalize a dict surface form to the spaCy concatenated entity surface
 # (hyphens and whitespace -> underscore) so dict aliases align with the
 # nodelist's concatenated entity names. Idempotent.

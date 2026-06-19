@@ -34,7 +34,9 @@ Usage:
 """
 
 import os
+import re
 import csv
+import time
 import subprocess
 import shutil
 import traceback
@@ -42,12 +44,27 @@ import traceback
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-# Env-overridable; shares CLOBBER with the R steps' _config.R.
+# Env-overridable; shares CLOBBER/TESTING/TESTING_N with the R steps' _config.R.
 def _env_bool(name, default=False):
     v = os.environ.get(name)
     return default if not v else v.lower() in ("1", "true", "t", "yes", "y")
 
-CLOBBER = _env_bool("CLOBBER")  # CLOBBER=1 to overwrite existing outputs
+def _env_int(name, default):
+    v = os.environ.get(name)
+    try:
+        return int(v) if v else default
+    except ValueError:
+        return default
+
+CLOBBER   = _env_bool("CLOBBER")        # CLOBBER=1 to overwrite existing outputs
+TESTING   = _env_bool("TESTING")        # TESTING=1 restricts to first TESTING_N Region_Years
+TESTING_N = _env_int("TESTING_N", 5)
+
+def _region_year(name):
+    """Region_Year key from a filename (normalizes legacy Region_X__YYYY)."""
+    m = re.search(r'Region_[^_]+_[0-9]{4}',
+                  re.sub(r'(Region_[^_]+)__([0-9]{4})', r'\1_\2', name))
+    return m.group(0) if m else None
 
 # Paths — adjust if running from a different working directory
 PDF_DIR       = "tijuanabox/core_data/plan_pdfs"
@@ -113,13 +130,35 @@ def is_pdf(path):
         return False
 
 
+def write_with_retry(write_fn, path, tries=6, base_delay=3.0):
+    """Run write_fn(path), retrying on cloud-filesystem I/O timeouts (Box File
+    Provider can return ETIMEDOUT / Errno 60 under write load) with exponential
+    backoff. Re-raises if every attempt fails so the caller's per-file handler
+    logs it and moves on. Waits ~3,6,12,24,48s between the 6 attempts.
+    """
+    for attempt in range(1, tries + 1):
+        try:
+            write_fn(path)
+            return
+        except OSError as e:                       # TimeoutError is an OSError
+            if attempt == tries:
+                raise
+            wait = base_delay * (2 ** (attempt - 1))
+            print(f"    I/O timeout (errno {getattr(e, 'errno', '?')}) writing "
+                  f"{os.path.basename(path)} — retry {attempt}/{tries - 1} in {wait:.0f}s",
+                  flush=True)
+            time.sleep(wait)
+
+
 def write_tsv(pages, txt_path):
     """Write page list to TSV matching pdftotext.R output format."""
-    with open(txt_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f, delimiter="\t")
-        writer.writerow(["page", "text"])
-        for i, text in enumerate(pages, 1):
-            writer.writerow([i, text])
+    def _w(p):
+        with open(p, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f, delimiter="\t")
+            writer.writerow(["page", "text"])
+            for i, text in enumerate(pages, 1):
+                writer.writerow([i, text])
+    write_with_retry(_w, txt_path)
 
 
 def write_raw_pages(pages, parquet_path):
@@ -128,11 +167,13 @@ def write_raw_pages(pages, parquet_path):
     arrow::read_parquet(path)$raw_text -> a character vector (one element per
     page), the input shape extract_front_matter_acronyms() expects.
     """
-    table = pa.table({
-        "page": list(range(1, len(pages) + 1)),
-        "raw_text": list(pages),
-    })
-    pq.write_table(table, parquet_path)
+    def _w(p):
+        table = pa.table({
+            "page": list(range(1, len(pages) + 1)),
+            "raw_text": list(pages),
+        })
+        pq.write_table(table, p)
+    write_with_retry(_w, parquet_path)
 
 
 # ── Orphan cleanup ───────────────────────────────────────────────────────────
@@ -169,6 +210,14 @@ if deleted:
 
 files = sorted(os.listdir(PDF_DIR))
 print(f"Files in plan_pdfs/: {len(files)}")
+
+# TESTING: restrict to the first TESTING_N Region_Years (coherent end-to-end subset).
+if TESTING:
+    rys  = sorted({ry for ry in map(_region_year, files) if ry})
+    keep = set(rys[:TESTING_N])
+    files = [f for f in files if _region_year(f) in keep]
+    print(f"TESTING mode: {len(files)} file(s) across {len(keep)} "
+          f"Region_Year(s): {', '.join(sorted(keep))}")
 
 converted = skipped = failed = 0
 
