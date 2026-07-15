@@ -4,7 +4,7 @@ CLOBBER <- FALSE  # Set TRUE to re-download already-existing PDFs
 library(dplyr)
 library(stringr)
 library(httr)
-irwm_db <- read.csv("tijuanabox/raw_data/planlinks.csv")
+irwm_db <- read.csv("tijuanabox/core_data/planlinks.csv")
 ## add if statement to this if nrow within group is > 1
 irwm_db <- irwm_db %>%
   mutate(region_name = paste0("Region_", str_trim(str_extract(IRWM_Region, "[^-]+")))) %>%
@@ -21,7 +21,7 @@ irwm_db <- irwm_db %>%
 
 
 urls   <- irwm_db$url
-planloc <- "tijuanabox/raw_data/plan_pdfs"
+planloc <- "tijuanabox/core_data/plan_pdfs"
 
 sanitize_filename <- function(x) gsub(" ", "_", x)
 
@@ -102,7 +102,7 @@ download_plans <- function(url, region_year) {
 statuses <- mapply(download_plans, url = urls, region_year = irwm_db$region_year)
 manifest$status <- statuses
 
-write.csv(manifest, "tijuanabox/raw_data/download_manifest.csv", row.names = FALSE)
-message("Manifest written to tijuanabox/raw_data/download_manifest.csv")
+write.csv(manifest, "tijuanabox/core_data/download_manifest.csv", row.names = FALSE)
+message("Manifest written to tijuanabox/core_data/download_manifest.csv")
 
 

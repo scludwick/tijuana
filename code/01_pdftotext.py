@@ -1,0 +1,271 @@
+"""
+pdftotext.py
+---------------
+converts all PDFs in plan_pdfs/ to:
+  1. tab-separated text files in plan_txts_raw/, one row per page
+     (page\ttext) — primary input for cleaningtxt.py.
+  2. per-page parquet files in plan_txts_raw_pages/ (page, raw_text) with
+     newlines and multi-space column gaps PRESERVED. This mirrors kings
+     step1's raw-pages artifact and is consumed by the disambiguation step's
+     extract_front_matter_acronyms() path, which needs the original
+     "ACR    Long Form" front-matter table layout (the TSV above strips that
+     structure once cleaningtxt.py collapses whitespace).
+
+Output format (TSV, matches pdftotext.R):
+    page\ttext
+
+Extraction engine:
+    Uses the system `pdftotext` CLI (poppler), the same underlying library
+    as pdftools::pdf_text() in R. OCR fallback via tesseract CLI for scanned/image-only PDFs
+
+Requirements:
+    poppler (provides pdftotext CLI):
+        macOS:   brew install poppler
+        Ubuntu:  apt install poppler-utils
+    tesseract (optional, for OCR fallback):
+        macOS:   brew install tesseract
+        Ubuntu:  apt install tesseract-ocr
+    pdf2image (optional, for OCR fallback):
+        pip install pdf2image
+
+Usage:
+    python3 code/01_pdftotext.py
+    (run from the project root, i.e. the folder containing tijuanabox/)
+"""
+
+import os
+import re
+import csv
+import time
+import subprocess
+import shutil
+import traceback
+
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+# Env-overridable; shares CLOBBER/TESTING/TESTING_N with the R steps' _config.R.
+def _env_bool(name, default=False):
+    v = os.environ.get(name)
+    return default if not v else v.lower() in ("1", "true", "t", "yes", "y")
+
+def _env_int(name, default):
+    v = os.environ.get(name)
+    try:
+        return int(v) if v else default
+    except ValueError:
+        return default
+
+CLOBBER   = _env_bool("CLOBBER")        # CLOBBER=1 to overwrite existing outputs
+TESTING   = _env_bool("TESTING")        # TESTING=1 restricts to first TESTING_N Region_Years
+TESTING_N = _env_int("TESTING_N", 5)
+
+def _region_year(name):
+    """Region_Year key from a filename (normalizes legacy Region_X__YYYY)."""
+    m = re.search(r'Region_[^_]+_[0-9]{4}',
+                  re.sub(r'(Region_[^_]+)__([0-9]{4})', r'\1_\2', name))
+    return m.group(0) if m else None
+
+# Paths — adjust if running from a different working directory
+PDF_DIR       = "tijuanabox/core_data/plan_pdfs"
+TXT_DIR       = "tijuanabox/core_data/plan_txts_raw"
+RAW_PAGES_DIR = "tijuanabox/core_data/plan_txts_raw_pages"
+
+os.makedirs(TXT_DIR, exist_ok=True)
+os.makedirs(RAW_PAGES_DIR, exist_ok=True)
+
+# Verify pdftotext is available
+if not shutil.which("pdftotext"):
+    raise EnvironmentError(
+        "pdftotext not found. Install poppler:\n"
+        "  macOS:  brew install poppler\n"
+        "  Ubuntu: sudo apt install poppler-utils"
+    )
+
+
+def extract_text_poppler(pdf_path):
+    """
+    Extract text page-by-page using pdftotext (poppler CLI).
+    Pages are separated by form-feed characters (\\f) in the output.
+    Returns a list of strings, one per page.
+    """
+    result = subprocess.run(
+        ["pdftotext", "-layout", pdf_path, "-"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"pdftotext error: {result.stderr.strip()}")
+    # pdftotext separates pages with form-feed; split and drop trailing empty
+    pages = result.stdout.split("\f")
+    # The last element after the final \f is always empty — remove it
+    if pages and pages[-1].strip() == "":
+        pages = pages[:-1]
+    return pages
+
+
+def extract_text_ocr(pdf_path):
+    """
+    OCR fallback for scanned/image-only PDFs.
+    Requires: pip install pdf2image  AND  brew/apt install tesseract poppler
+    """
+    try:
+        from pdf2image import convert_from_path
+        import pytesseract
+
+        images = convert_from_path(pdf_path, dpi=200)
+        return [pytesseract.image_to_string(img) for img in images]
+    except ImportError:
+        return []
+
+
+def is_pdf(path):
+    """Check magic bytes — reliable regardless of file extension."""
+    try:
+        with open(path, "rb") as f:
+            return f.read(4) == b"%PDF"
+    except OSError:
+        return False
+
+
+def write_with_retry(write_fn, path, tries=6, base_delay=3.0):
+    """Run write_fn(path), retrying on cloud-filesystem I/O timeouts (Box File
+    Provider can return ETIMEDOUT / Errno 60 under write load) with exponential
+    backoff. Re-raises if every attempt fails so the caller's per-file handler
+    logs it and moves on. Waits ~3,6,12,24,48s between the 6 attempts.
+    """
+    for attempt in range(1, tries + 1):
+        try:
+            write_fn(path)
+            return
+        except OSError as e:                       # TimeoutError is an OSError
+            if attempt == tries:
+                raise
+            wait = base_delay * (2 ** (attempt - 1))
+            print(f"    I/O timeout (errno {getattr(e, 'errno', '?')}) writing "
+                  f"{os.path.basename(path)} — retry {attempt}/{tries - 1} in {wait:.0f}s",
+                  flush=True)
+            time.sleep(wait)
+
+
+def write_tsv(pages, txt_path):
+    """Write page list to TSV matching pdftotext.R output format."""
+    def _w(p):
+        with open(p, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f, delimiter="\t")
+            writer.writerow(["page", "text"])
+            for i, text in enumerate(pages, 1):
+                writer.writerow([i, text])
+    write_with_retry(_w, txt_path)
+
+
+def write_raw_pages(pages, parquet_path):
+    """Write the raw page text to parquet, one row per page, with newlines and
+    multi-space column gaps PRESERVED. Read in R via
+    arrow::read_parquet(path)$raw_text -> a character vector (one element per
+    page), the input shape extract_front_matter_acronyms() expects.
+    """
+    def _w(p):
+        table = pa.table({
+            "page": list(range(1, len(pages) + 1)),
+            "raw_text": list(pages),
+        })
+        pq.write_table(table, p)
+    write_with_retry(_w, parquet_path)
+
+
+# ── Orphan cleanup ───────────────────────────────────────────────────────────
+# Delete any output file whose source PDF no longer exists (both the .txt TSV
+# and the .parquet raw-pages artifact).
+
+pdf_stems = set()
+for fname in os.listdir(PDF_DIR):
+    if os.path.isfile(os.path.join(PDF_DIR, fname)):
+        stem = fname[:-4] if fname.lower().endswith(".pdf") else fname
+        pdf_stems.add(stem)
+
+deleted = 0
+for txt_fname in sorted(os.listdir(TXT_DIR)):
+    if not txt_fname.endswith(".txt"):
+        continue
+    if txt_fname[:-4] not in pdf_stems:
+        os.remove(os.path.join(TXT_DIR, txt_fname))
+        print(f"  Removed orphan: {txt_fname}")
+        deleted += 1
+
+for pq_fname in sorted(os.listdir(RAW_PAGES_DIR)):
+    if not pq_fname.endswith(".parquet"):
+        continue
+    if pq_fname[:-8] not in pdf_stems:
+        os.remove(os.path.join(RAW_PAGES_DIR, pq_fname))
+        print(f"  Removed orphan: {pq_fname}")
+        deleted += 1
+
+if deleted:
+    print(f"Removed {deleted} orphaned output file(s).\n")
+
+# ── Main loop ────────────────────────────────────────────────────────────────
+
+files = sorted(os.listdir(PDF_DIR))
+print(f"Files in plan_pdfs/: {len(files)}")
+
+# TESTING: restrict to the first TESTING_N Region_Years (coherent end-to-end subset).
+if TESTING:
+    rys  = sorted({ry for ry in map(_region_year, files) if ry})
+    keep = set(rys[:TESTING_N])
+    files = [f for f in files if _region_year(f) in keep]
+    print(f"TESTING mode: {len(files)} file(s) across {len(keep)} "
+          f"Region_Year(s): {', '.join(sorted(keep))}")
+
+converted = skipped = failed = 0
+
+for fname in files:
+    pdf_path = os.path.join(PDF_DIR, fname)
+
+    # Skip directories and non-PDF files
+    if os.path.isdir(pdf_path):
+        continue
+    if not is_pdf(pdf_path):
+        print(f"  Skipping non-PDF: {fname[:70]}")
+        skipped += 1
+        continue
+
+    # Strip .pdf extension for the output filename stem
+    stem = fname[:-4] if fname.lower().endswith(".pdf") else fname
+    # Note: all expected files end in .pdf; magic bytes check above catches anything else
+    txt_path       = os.path.join(TXT_DIR, stem + ".txt")
+    raw_pages_path = os.path.join(RAW_PAGES_DIR, stem + ".parquet")
+
+    # Skip only when BOTH outputs exist, so a rerun backfills the raw-pages
+    # parquet for PDFs converted before this artifact was added.
+    if os.path.exists(txt_path) and os.path.exists(raw_pages_path) and not CLOBBER:
+        skipped += 1
+        continue
+
+    print(f"  Converting: {fname[:70]}")
+    try:
+        pages = extract_text_poppler(pdf_path)
+
+        # If poppler returned all-empty pages, try OCR
+        if not any(p.strip() for p in pages):
+            print("    → empty text, trying OCR...")
+            pages = extract_text_ocr(pdf_path)
+
+        if pages:
+            write_tsv(pages, txt_path)
+            write_raw_pages(pages, raw_pages_path)
+            print(f"    → {len(pages)} pages → {os.path.basename(txt_path)} "
+                  f"+ {os.path.basename(raw_pages_path)}")
+            converted += 1
+        else:
+            print("    → SKIP: no text extracted (may need manual OCR)")
+            failed += 1
+
+    except Exception as e:
+        print(f"    → ERROR: {e}")
+        traceback.print_exc()
+        failed += 1
+
+print(f"\nDone. Converted: {converted}  Skipped (already done): {skipped}  Failed: {failed}")

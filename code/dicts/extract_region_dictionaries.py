@@ -6,10 +6,15 @@ extracts terms via Claude API, and writes a flat JSON term list per
 Region_Year.
 
 Output:
-    tijuanabox/int_data/dictionaries/Region_X_YYYY_dict.json
+    tijuanabox/core_data/dictionaries/Region_X_YYYY_dict.json
     Each file is a flat JSON array of strings (full expanded names).
-    These feed into Stage 2 (textnet_parse_and_extract.R) as part of the
-    spaCy entity ruler, combined with the centralized water dictionaries.
+    These feed into the parse step (03_textnet_parse_and_extract.R) as part of
+    the spaCy entity ruler, combined with the curated dictionaries.
+
+This is a dictionary-creation side process, NOT a numbered pipeline stage: it
+lives in code/dicts/ with the other dictionary builders and is run occasionally
+(when the corpus changes), not on every pipeline run. It does depend on raw
+text from 01_pdftotext.py existing on disk.
 
 Section detection:
     Pages are scanned for headers matching acronym/abbreviation/glossary
@@ -17,8 +22,8 @@ Section detection:
     are sent to Claude for term extraction.
 
 Usage:
-    python3 extract_region_dictionaries.py
-    (run from project root, i.e. the folder containing tijuanabox/)
+    python3 code/dicts/extract_region_dictionaries.py
+    (run from the repo root, i.e. the folder containing tijuanabox/)
 
 Requirements:
     pip install anthropic
@@ -37,13 +42,17 @@ csv.field_size_limit(sys.maxsize)
 
 import anthropic
 
-# === FLAGS ===
-TESTING = False   # Set False to process all Region_Years
-CLOBBER = True  # Set True to overwrite existing dict files
+# === FLAGS (env-overridable; shares CLOBBER/TESTING with the R steps' _config.R) ===
+def _env_bool(name, default=False):
+    v = os.environ.get(name)
+    return default if not v else v.lower() in ("1", "true", "t", "yes", "y")
+
+TESTING = _env_bool("TESTING")   # TESTING=1 restricts to a small subset
+CLOBBER = _env_bool("CLOBBER")   # CLOBBER=1 to overwrite existing dict files
 
 # === PATHS ===
-TXT_DIR  = "tijuanabox/int_data/plan_txts_raw"
-DICT_DIR = "tijuanabox/int_data/dictionaries"
+TXT_DIR  = "tijuanabox/core_data/plan_txts_raw"
+DICT_DIR = "tijuanabox/core_data/dictionaries"
 
 os.makedirs(DICT_DIR, exist_ok=True)
 
