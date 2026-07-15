@@ -56,16 +56,6 @@ if (any(empty_texts)) {
   texts <- texts[!empty_texts]
 }
 
-# === PARTIES ===
-parties <- c("Project", "Projects",
-             "Applicant", "Applicants",
-             "Permittee", "Permittees",
-             "Proponent", "Proponents",
-             "Band", "Bands",
-             "tribe", "tribes",
-             "Tribe", "Tribes",
-             "we", "We")
-
 # === OUTPUT PATHS ===
 dir.create("tijuanabox/core_data/parsed_files", recursive = TRUE, showWarnings = FALSE)
 dir.create("tijuanabox/core_data/raw_extracted_networks", recursive = TRUE, showWarnings = FALSE)
@@ -139,8 +129,7 @@ parsed <- textNet::parse_text_trf(
   overwrite             = CLOBBER,
   entity_ruler_patterns = dict_ents,
   overwrite_ents        = TRUE,
-  ruler_position        = "after",
-  custom_entities       = list(PARTIES = parties)
+  ruler_position        = "after"
 )
 
 # === GROUP BY REGION_YEAR ===
@@ -172,7 +161,7 @@ keptentities <- c("PERSON",
                   "LOC", "PRODUCT",
                   "EVENT", "WORK_OF_ART",
                   "LAW", "LANGUAGE",
-                  "PARTIES", "CUSTOM", "DICT", "PATTERN")
+                  "CUSTOM", "DICT", "PATTERN")
 
 extract_dir <- "tijuanabox/core_data/raw_extracted_networks"
 for (m in seq_along(projects)) {
