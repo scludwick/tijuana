@@ -1,0 +1,146 @@
+---
+title: "exploration"
+output: html_document
+---
+
+initial exploration of the networks extracted April 16
+
+first let's bring them in and give them some names
+```{r}
+library(textNet)
+library(purrr)
+library(igraph)
+library(tidyverse)
+```
+
+```{r}
+# NULL networks?
+# raw_networks <- readRDS("tijuanabox/int_data/raw_extracts.RDS")
+
+# individual network files
+files <- list.files("tijuanabox/int_data/raw_extracted_networks", full.names = T)
+extracts <- lapply(files, readRDS)
+names <- str_extract(basename(files), pattern = "(?<=extract_).+?(?=\\.RDS)")
+for (i in 1:length(extracts)) {
+  names(extracts)[i] <- names[i]
+}
+extracts[1]
+```
+need to remember to edit the csv or scraping cleaning script before scraping to ensure that the slot for region # has 2 digits (for those regions <10)
+
+do some cleaning, using elise's helper code from salinas, copied over. 
+```{r}
+source("code/_XX_helpers/clean_extracts.R")
+clean_extracts <- clean(extracts)
+clean_extracts[2]
+```
+the appositives list is spacy's attempt at identifying appositives NOT claude's identified acronyms and abbreviations. not sure where those are.
+
+```{r}
+
+# networks <- lapply(clean_extracts, function(i)
+# {export_to_network(i, "igraph", keep_isolates = F,
+#                    collapse_edges = T, self_loops = T)})
+# 
+# networks <- vector(mode = "list", length = length(clean_extracts))
+# for (i in seq_along(clean_extracts)) {
+#   net <- export_to_network(clean_extracts[[i]], "igraph", keep_isolates = F,
+#                    collapse_edges = T, self_loops = T)
+#   networks[[i]] <- net
+# }
+# not working because some networks are missing, use possibly() to skip missing networks 
+
+networks <- lapply(clean_extracts, possibly(
+  ~ export_to_network(.x, "igraph", keep_isolates = T, collapse_edges = T, self_loops = T)[[1]],
+  otherwise = NULL
+))
+
+which(sapply(networks, is.null))
+# gives which ones networks missing for
+```
+
+```{r}
+ggraph(networks[[1]], layout = "fr") +
+  geom_edge_fan(aes(alpha = weight),
+                end_cap = circle(1, "mm"),
+                color = "#000000",
+                width = 0.3,
+                arrow = arrow(angle = 15, length = unit(0.07, "inches"), ends = "last", type = "closed"))+
+  geom_node_point(aes(color = entity_type, size = num_appearances),  alpha = 0.6) +
+  labs(title = "Example Network Plot") + theme_void()
+
+```
+what is "PATTERN" node type?
+
+OK so let's just rock with what we have. We will want descriptives about the networks (nodes, edges, etc.)
+
+some starting places:
+Graph correlation
+Some sort of graph structural matching (correlation is dyadic, structure matching is more about substructures).
+Core–periphery
+Modularity
+Centralization measure
+Perhaps a brokerage measure
+
+first looking at top nodes...
+```{r}
+library(dplyr)
+networks <- networks[lengths(networks) > 0]
+top_nodes_all_networks <- list()
+for (i in seq_along(networks)) {
+  g <- networks[[i]] 
+  network_name <- names(networks)[[i]]
+  deg <- degree(networks[[i]], mode = "all")
+  # btw <- betweenness(g, directed = is.directed(g))
+  # eig <- eigen_centrality(g)$vector
+node_names <- V(g)$name
+
+# store as df per network
+nodes <- data.frame(
+  network = network_name,
+  node    = node_names,
+  degree  = deg,
+  row.names = NULL) 
+
+# get top 30 
+top_nodes <- nodes %>%
+  arrange(desc(degree)) %>%
+  slice_head(n = 30)
+
+top_nodes_all_networks[[i]] <- top_nodes
+}
+
+top_nodes_df <- bind_rows(top_nodes_all_networks)
+
+```
+seems mostly sensible, will be able to interpret more once acronyms are resolved
+
+basic stats for each network
+```{r}
+# get graph-level descriptives for each network
+library(tidyverse)
+network_info <- lapply(seq_along(networks), function(i) {
+  g <- networks[[i]]
+  list(c(plan = names(networks[i]),
+         n_nodes = vcount(g),
+         n_edges = ecount(g),
+         density = edge_density(g)
+  )
+  )
+})
+network_info_df <- bind_rows(network_info)
+
+stats_overall <- network_descriptives %>%
+  summarise(
+      median_nodes = median(n_nodes),
+      IQR_nodes = paste0(quantile(n_nodes, .25),"-",quantile(n_nodes, .75)),
+      avg_nodes = mean(n_nodes),
+      sd_nodes = sd(n_nodes),
+      median_edges = median(n_edges),
+      IQR_edges = paste0(quantile(n_edges, .25),"-",quantile(n_edges, .75)),
+      avg_edges = mean(n_edges),
+      sd_edges = sd(n_edges)) %>%
+  mutate(project_type = "All", network_type = "Full")
+```
+
+
