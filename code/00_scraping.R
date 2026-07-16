@@ -5,20 +5,11 @@ library(dplyr)
 library(stringr)
 library(httr)
 irwm_db <- read.csv("tijuanabox/core_data/planlinks.csv")
-## add if statement to this if nrow within group is > 1
 irwm_db <- irwm_db %>%
-  mutate(region_name = paste0("Region_", str_trim(str_extract(IRWM_Region, "[^-]+")))) %>%
-  group_by(IRWM_Region, year) %>%
-  mutate(region_year = paste0(region_name, "_", year)) %>%
-
-  # mutate(n = row_number()) %>% 
-  # mutate(alln = row_number(n)) %>%
-  # # i think maybe i don't want this to be part_n but instead be whatever file name is
-  # mutate(filename = 
-  #          case_when(alln > 1 ~ paste0(region_name, "_", year, "_part", n, ".pdf"),
-  #                    alln == 1 ~ paste0(region_name, "_", year, ".pdf"))) %>%
-  ungroup()
-
+  mutate(region_num = str_trim(str_extract(IRWM_Region, "^([^-]+)")),
+         # region_num = str_pad(region_num, width = 2, side = "left", pad = "0"),
+         region_year = paste0("Region_", region_num, "_", year)) %>% 
+  select(-region_num)
 
 urls   <- irwm_db$url
 planloc <- "tijuanabox/core_data/plan_pdfs"
