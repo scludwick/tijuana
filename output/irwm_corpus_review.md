@@ -149,7 +149,11 @@ Regions with 2019 plans (2, 7, 13, 16, 23, 24, 27, 34, 44, 48, 49) are less like
 
 ## Data Quality Notes
 
-**Region 36 (Tuolumne-Stanislaus):** Was erroneously recorded as Region 26 in `planlinks.csv`. Fixed on 2026-04-10 — updated to `36 - Tuolumne-Stanislaus` in planlinks.csv and renamed all PDF/TXT files from `Region_26_` to `Region_36_` prefix.
+**Region 36 (Tuolumne-Stanislaus):** Was erroneously recorded as Region 26 in `planlinks.csv`, colliding with Region 26 (San Diego). The 2026-04-10 pass renamed the PDF/TXT files from `Region_26_` to `Region_36_` but did not update `planlinks.csv`, so the fix regressed: a scrape on 2026-04-16 re-read `26 - Tuolumne-Stanislaus` and re-downloaded the 2017 plan as `Region_26_2017_*`, which then propagated through text, parse, extract, and graph stages.
+
+Fully fixed on 2026-07-16 — `planlinks.csv` updated to `36 - Tuolumne-Stanislaus` (the source of the regression), the duplicate `Region_26_2017_*` lineage quarantined, and the 2017 dictionary renamed to `Region_36_2017_dict.json`. Region 26 (San Diego) data was never contaminated: the `Region_26_2013` extract and dictionary were both built after the file rename, so they contain San Diego text only.
+
+**Region 36 (Tuolumne-Stanislaus) 2017 appendix:** The `planlinks.csv` URL carried a literal ` (Appendices)` suffix, so every download attempt failed and the appendix was never fetched. Suffix removed 2026-07-16; the bare URL resolves and the appendix will download on the next scrape.
 
 **Region_NA file:** A file `Region_NA_2012_GLAC_OSHARP_Appendices_Final` exists in both `plan_pdfs/` and `plan_txts_raw/` with no matching entry in `planlinks.csv`. GLAC = Greater Los Angeles County, so this is likely a stray appendix from the 2012 Greater LA plan that was downloaded outside the normal pipeline.
 

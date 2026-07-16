@@ -7,8 +7,11 @@ library(httr)
 irwm_db <- read.csv("tijuanabox/core_data/planlinks.csv")
 irwm_db <- irwm_db %>%
   mutate(region_num = str_trim(str_extract(IRWM_Region, "^([^-]+)")),
-         # region_num = str_pad(region_num, width = 2, side = "left", pad = "0"),
-         region_year = paste0("Region_", region_num, "_", year)) %>% 
+         # Zero-pad to two digits so Region_YYYY prefixes sort numerically.
+         # planlinks.csv is already padded; this keeps an unpadded entry from
+         # reintroducing Region_1_ alongside Region_01_.
+         region_num = str_pad(region_num, width = 2, side = "left", pad = "0"),
+         region_year = paste0("Region_", region_num, "_", year)) %>%
   select(-region_num)
 
 urls   <- irwm_db$url

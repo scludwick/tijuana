@@ -10,7 +10,7 @@ map of those data folders see `tijuanabox/core_data/README.md`; for data
 provenance and acquisition notes see `tijuanabox/README.txt`. This README covers
 the code/pipeline only.
 
-The unit of analysis is **Region_Year** (e.g., `Region_7_2020`). Individual PDFs
+The unit of analysis is **Region_Year** (e.g., `Region_07_2020`). Individual PDFs
 are processed independently through PDF extraction and cleaning, then grouped by
 Region_Year for parsing, network extraction, disambiguation, and graph building.
 
@@ -184,8 +184,15 @@ and `region_year_key()`.
 ## Filename Convention
 
 All filenames use underscores, no spaces. The Region_Year prefix format is
-`Region_X_YYYY` (e.g., `Region_7_2020`), enforced at download time in
+`Region_XX_YYYY` (e.g., `Region_07_2020`), enforced at download time in
 `00_scraping.R`. Per-Region_Year artifacts are named `extract_<Region_Year>.RDS`.
+
+The region number is zero-padded to two digits so prefixes sort numerically
+(`Region_02_` before `Region_10_`). Padding is applied in `00_scraping.R` and
+mirrored in the `IRWM_Region` column of `planlinks.csv`. Two regions are
+deliberate exceptions: `Region_10B_` (a subregional plan with a letter suffix)
+and `Region_NA_` (a stray file with no `planlinks.csv` entry). Readers match
+`Region_[^_]+_[0-9]{4}`, so they tolerate all three forms.
 
 ---
 
