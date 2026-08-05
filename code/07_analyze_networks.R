@@ -67,16 +67,37 @@ network_descriptives <- lapply(seq_along(networks), function(i) {
          n_edges = ecount(g),
          density = edge_density(g),
          mean_degree = mean(deg),
-         sd_degree = sd(deg)
-         # reciprocity = reciprocity(g),
-         # transitivity = transitivity(g, type = "global"),
-         # centralization = centr_degree(g)$centralization)
+         sd_degree = sd(deg),
+         reciprocity = reciprocity(g),
+         transitivity = transitivity(g),
+         centralization = centr_degree(g)$centralization,
+         path_length = mean_distance(g)
   ))})
 
 descriptives_df <- bind_rows(network_descriptives) %>%
-  mutate(across(n_nodes:sd_degree, as.numeric))
+  mutate(across(n_nodes:path_length, as.numeric))
+# but can't compare all of these to each other because different network sizes (eg path length affected by network size)
 
-summary(descriptives_df)
+# playing with modularity 
+# modularity is how strongly the network divides into clusters
+# you detect communities first 
+# then you determine how "good" that division is (this is modularity score)
+# so high score means there is clearer community structure
+# low score means less clear comms
+
+mods <- list()
+for (i in seq_along(networks)) {
+  g <- networks[[i]]
+  comms <- cluster_infomap(g, e.weights = E(g)$weight)
+  
+  mods[[i]] <- data.frame(
+    network    = names(networks)[i],
+    n_comms    = length(unique(membership(comms))),
+    modularity = modularity(comms)
+  )
+}
+mods_df <- bind_rows(mods)
+
 
 # some starting places:
 # Graph correlation
@@ -85,3 +106,12 @@ summary(descriptives_df)
 # Modularity
 # Centralization measure
 # Perhaps a brokerage measure
+
+# correlation (dyadic)
+# first have to make into adjacency matrices
+adj_mat_nets <- lapply(networks, as_adjacency_matrix, sparse = FALSE)
+# also have to give each graph same node set 
+# just try for Region_01
+R1nodes <- sort(unique(c(V(networks[[1]])$name, V(networks[[2]])$name)))
+gcor(dat = adj_mat_nets, diag=FALSE, mode="digraph")
+
