@@ -137,6 +137,165 @@ build_global_dict <- function(keys = DICT_KEYS) {
             to != from])
 }
 
+# --- Entity-ruler labels (parse step) -------------------------------------
+# The ruler labels each term with a standard spaCy entity type, so ruler
+# matches sit alongside spaCy's own entities instead of under a catch-all
+# label. Each dictionary has a default label; a few row types override it.
+DICT_SPACY_LABELS <- c(water_entity_dictionary         = "ORG",
+                       water_infrastructure_dictionary = "FAC",
+                       water_bodies_dictionary         = "LOC",
+                       water_gsa_dictionary            = "ORG",
+                       ca_utilities_dictionary         = "ORG",
+                       gov_entities_dict               = "ORG")
+DICT_TYPE_SPACY_LABELS <- c(statute = "LAW", publication = "WORK_OF_ART")
+.DICT_TYPE_COLS <- c("entity_type", "body_type", "infra_type")
+
+# Returns a (term, label, is_canonical) data.table for every name in one
+# dictionary. Terms keep their on-disk surface form, the same strings
+# load_dict_terms() returns, so the two can be joined.
+load_dict_labels <- function(f, key) {
+  if (!file.exists(f)) { warning("Missing dictionary: ", f); return(NULL) }
+  d <- read.csv(f, stringsAsFactors = FALSE)
+  if ("all_names" %in% names(d)) {
+    tcol  <- intersect(.DICT_TYPE_COLS, names(d))[1]
+    parts <- strsplit(d$all_names, "|", fixed = TRUE)
+    type  <- if (is.na(tcol)) NA_character_ else rep(d[[tcol]], lengths(parts))
+    dt <- data.table::data.table(
+      term         = unlist(parts),
+      type         = type,
+      is_canonical = unlist(lapply(parts, function(p) seq_along(p) == 1L)))
+  } else if (all(c("Agency", "Abbr") %in% names(d))) {
+    dt <- data.table::data.table(
+      term         = c(d$Agency, d$Abbr),
+      type         = NA_character_,
+      is_canonical = rep(c(TRUE, FALSE), each = nrow(d)))
+  } else {
+    warning("Unknown dictionary schema (", f,
+            "): expected 'all_names' or Agency+Abbr")
+    return(NULL)
+  }
+  dt[, label := data.table::fcoalesce(unname(DICT_TYPE_SPACY_LABELS[type]),
+                                      unname(DICT_SPACY_LABELS[key]))]
+  dt[!is.na(term) & nzchar(term), .(term, label, is_canonical)]
+}
+
+# Term -> label for every dictionary term. A term listed in several rows or
+# dictionaries keeps one label: a row where it is the canonical name beats
+# one where it is an alias, then DICT_KEYS order wins (specific water dicts
+# before the broad gov dict).
+build_dict_labels <- function(keys = DICT_KEYS) {
+  dt <- data.table::rbindlist(lapply(keys, function(k)
+    load_dict_labels(dict_path(k), key = k)[, key_rank := match(k, keys)]))
+  data.table::setorder(dt, term, -is_canonical, key_rank)
+  unique(dt, by = "term")[, .(term, label)]
+}
+
+# Labels for ruler terms with no dictionary entry (doc-mined acronym
+# expansions, regional JSON dicts), guessed from the term's last word:
+# "... Water District" -> ORG, "... Act" -> LAW, "... Creek" -> LOC.
+# Returns NA when the last word is not listed; the parse step leaves those
+# terms out of the ruler so spaCy labels them itself.
+HEAD_WORD_SPACY_LABELS <- list(
+  ORG = c("district", "districts", "agency", "agencies", "authority",
+          "association", "council", "councils", "committee", "commission",
+          "company", "corporation", "institute", "board", "department",
+          "administration", "service", "services", "alliance", "coalition",
+          "group", "laboratory", "center", "foundation", "partnership",
+          "conservancy", "cooperative", "utility", "bureau", "office",
+          "division", "governments", "society", "university", "college",
+          "trust", "consortium", "collaborative", "corps", "inc", "llc",
+          "associates", "subcommittee"),
+  GPE = c("county", "city", "town"),
+  LOC = c("river", "creek", "lake", "basin", "subbasin", "valley", "delta",
+          "bay", "watershed", "slough", "estuary", "aquifer", "marsh",
+          "park", "refuge", "forest", "canyon"),
+  FAC = c("dam", "canal", "aqueduct", "pipeline", "plant", "reservoir",
+          "facility", "tunnel", "levee", "weir", "bypass"),
+  LAW = c("act", "code", "bill", "ordinance", "regulations", "proposition"),
+  WORK_OF_ART = c("plan", "study", "report", "assessment", "handbook",
+                  "bulletin", "manual", "guidelines", "strategy"))
+
+head_word_labels <- function(terms) {
+  lookup <- stats::setNames(rep(names(HEAD_WORD_SPACY_LABELS),
+                                lengths(HEAD_WORD_SPACY_LABELS)),
+                            unlist(HEAD_WORD_SPACY_LABELS))
+  # In "X of Y" the head is the last word of X ("Corporation of Mariposa
+  # County" is an ORG, not a GPE).
+  head <- sub("\\s+(of|for)\\s.*$", "", terms, ignore.case = TRUE)
+  unname(lookup[tolower(stringr::word(head, -1))])
+}
+
+# === Proper-noun filter (entity-ruler terms) ================================
+# The ruler should only impose proper nouns. Acronym glossaries also expand
+# common concepts ("SLR" -> "sea level rise", "BMP" -> "Best Management
+# Practices"), and glossaries title-case those, so casing in the glossary
+# alone can't separate them from names. The corpus can: a proper noun is
+# (almost) never written in lowercase in running text, while a concept is.
+#
+# A term is kept only if
+#   1. every content word starts with a capital or contains a digit
+#      (function words like "of", "and", "de" are exempt), and
+#   2. among its corpus occurrences (case-insensitive), the share written
+#      entirely in lowercase is <= max_lower_share. Terms seen fewer than
+#      min_count times pass on rule 1 alone (too rare to judge).
+# Returns a data.table (term, n, n_lower, lower_share, keep) so callers can
+# both filter and log what was dropped.
+.FUNCTION_WORDS <- c("of", "and", "the", "for", "in", "on", "to", "at", "by",
+                     "with", "&", "a", "an", "de", "del", "la", "las", "los",
+                     "el", "y")
+
+proper_noun_terms <- function(terms, text_list, max_lower_share = 0.1,
+                              min_count = 3L) {
+  norm <- function(x) {
+    x <- stringi::stri_replace_all_regex(x, "['\u2019]", "")  # Governor's -> Governors
+    stringi::stri_trim_both(stringi::stri_replace_all_regex(x, "[^\\p{L}\\p{N}&]+", " "))
+  }
+  # URLs/emails are lowercase by convention (noaa.gov) and would count as
+  # common-noun usage, so they are removed from the corpus before counting.
+  strip_urls <- function(x) stringi::stri_replace_all_regex(
+    x, "\\S*(https?://|www\\.|@)\\S*|\\S+\\.(gov|org|com|edu|net|us)\\b\\S*", " ",
+    opts_regex = stringi::stri_opts_regex(case_insensitive = TRUE))
+  terms <- unique(terms)
+  words <- strsplit(norm(terms), " ", fixed = TRUE)
+  capitalized <- vapply(words, function(w) {
+    w <- w[!tolower(w) %in% .FUNCTION_WORDS]
+    length(w) > 0L && all(grepl("^[[:upper:]]|[[:digit:]]", w))
+  }, logical(1))
+
+  # Count occurrences by tokenizing the corpus once and matching k-grams that
+  # start at a term's first word (a per-term substring scan over a ~200M-char
+  # corpus is far too slow). Occurrences directly after a capitalized word are
+  # skipped: they sit inside a longer name ("Vista Irrigation District") and
+  # would make a generic term ("Irrigation District") look like a proper noun.
+  tok    <- stringi::stri_split_regex(norm(strip_urls(unlist(text_list))), " +")
+  tok    <- unlist(tok, use.names = FALSE)
+  tok_lc <- tolower(tok)
+  N      <- length(tok)
+  key    <- tolower(norm(terms))
+  klen   <- lengths(strsplit(key, " ", fixed = TRUE))
+  n <- n_lower <- integer(length(terms))
+  for (k in unique(klen)) {
+    idx   <- which(klen == k)
+    first <- vapply(strsplit(key[idx], " ", fixed = TRUE), `[`, "", 1L)
+    pos   <- which(tok_lc %in% first)
+    pos   <- pos[pos + k - 1L <= N]
+    prev  <- tok[pmax(pos - 1L, 1L)]
+    pos   <- pos[pos == 1L | !grepl("^[[:upper:]]", prev) |
+                 tolower(prev) %in% .FUNCTION_WORDS]
+    gram  <- do.call(paste, lapply(seq_len(k) - 1L, function(j) tok_lc[pos + j]))
+    orig  <- do.call(paste, lapply(seq_len(k) - 1L, function(j) tok[pos + j]))
+    m     <- match(gram, key[idx])
+    hit   <- !is.na(m)
+    n[idx]       <- tabulate(m[hit], nbins = length(idx))
+    n_lower[idx] <- tabulate(m[hit & orig == gram], nbins = length(idx))
+  }
+  share <- ifelse(n > 0, n_lower / n, 0)
+
+  data.table::data.table(
+    term = terms, n = n, n_lower = n_lower, lower_share = round(share, 3),
+    keep = capitalized & (n < min_count | share <= max_lower_share))
+}
+
 # === Acronym mining =========================================================
 # One deterministic acronym miner used by BOTH the parse step (its `name`
 # column enriches the entity ruler) and the disambiguation step (its

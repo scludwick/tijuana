@@ -1,10 +1,6 @@
 all_names,entity_type,notes
-Groundwater Sustainability Agency|GSA,sgma_concept,generic
-Groundwater Sustainability Agencies|GSAs,sgma_concept,generic plural
-Groundwater Sustainability Plan|GSP,sgma_concept,generic
-Groundwater Sustainability Plans|GSPs,sgma_concept,generic plural
-Sustainable Groundwater Management Act|SGMA,sgma_concept,2014 statute
-DWR Bulletin 118|Bulletin 118,sgma_concept,basin priority designations
+Sustainable Groundwater Management Act|SGMA,statute,2014 statute
+DWR Bulletin 118|Bulletin 118,publication,basin priority designations
 Alameda County Water District GSA|Alameda County Water District,gsa,SANTA CLARA VALLEY - NILES CONE
 Aliso Water District GSA|Aliso Water District,gsa,SAN JOAQUIN VALLEY - DELTA-MENDOTA
 Alpaugh GSA|Alpaugh,gsa,SAN JOAQUIN VALLEY - TULE

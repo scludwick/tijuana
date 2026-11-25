@@ -48,6 +48,11 @@ TESTING_N <- .env_int("TESTING_N", 5L)
 # cleaning. Consumed by the parse step (filters pages before parsing).
 MIN_PAGE_CHARS <- .env_int("MIN_PAGE_CHARS", 200L)
 
+# RULER_MAX_LOWER_SHARE: an entity-ruler term is dropped as a common noun if
+# more than this share of its corpus occurrences are written all-lowercase
+# (see proper_noun_terms() in utils.R). Proper names sit at ~0.
+RULER_MAX_LOWER_SHARE <- as.numeric(Sys.getenv("RULER_MAX_LOWER_SHARE", "0.1"))
+
 # PARSE_WORKERS: number of parallel workers passed as `cl` to
 # textNet::textnet_extract() in the parse step. 1 is the safe default; raise
 # on a workstation.

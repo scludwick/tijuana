@@ -123,12 +123,60 @@ if (length(regional_json_files) > 0) {
 all_terms <- unique(c(global_terms, mined_names, regional_terms))
 all_terms <- all_terms[!is.na(all_terms) & nzchar(all_terms)]
 all_terms <- all_terms[stringr::str_count(all_terms, "\\s+") >= 1]
-message("Entity ruler: ", length(all_terms), " unique multi-word term(s)")
 
-dict_ents <- entity_specify(all_terms,
-                            case_sensitive = TRUE,
-                            whole_word_only = TRUE,
-                            entity_label = "DICT")
+# --- 5. Proper nouns only ---
+# Drops common concepts ("sea level rise", "Best Management Practices") that
+# the acronym miner and optional regional dicts contribute; see
+# proper_noun_terms() in utils.R. Curated dictionary terms are never dropped
+# automatically (the test misfires on a few real names like "Valley Water"),
+# but ones it flags are listed alongside the dropped terms so the CSVs can be
+# cleaned by hand.
+pn <- proper_noun_terms(all_terms, clean_texts,
+                        max_lower_share = RULER_MAX_LOWER_SHARE)
+pn[, source := data.table::fifelse(term %in% global_terms, "dictionary",
+                 data.table::fifelse(term %in% mined_names, "mined", "regional"))]
+flagged_path <- "tijuanabox/core_data/dictionaries/ruler_flagged_terms.csv"
+dir.create(dirname(flagged_path), showWarnings = FALSE, recursive = TRUE)
+data.table::fwrite(pn[keep == FALSE][order(source, -lower_share)], flagged_path)
+n_dict_flagged <- pn[keep == FALSE & source == "dictionary", .N]
+pn[source == "dictionary", keep := TRUE]
+message("Proper-noun filter dropped ", sum(!pn$keep), " of ", nrow(pn),
+        " term(s); kept ", n_dict_flagged,
+        " flagged curated-dictionary term(s); see ", flagged_path)
+all_terms <- pn[keep == TRUE, term]
+
+# --- 6. spaCy labels ---
+# Each term gets a standard spaCy type (ORG, GPE, LOC, FAC, LAW,
+# WORK_OF_ART): dictionary terms from their dictionary and row type, other
+# terms from their last word (see build_dict_labels() / head_word_labels() in
+# utils.R). Terms with no label are left to spaCy's own NER and logged.
+ruler <- data.table::data.table(term = all_terms)
+ruler[build_dict_labels(), on = "term", label := i.label]
+ruler[is.na(label), label := head_word_labels(term)]
+unlabeled_path <- "tijuanabox/core_data/dictionaries/ruler_unlabeled_terms.csv"
+data.table::fwrite(ruler[is.na(label), .(term)], unlabeled_path)
+message("Left ", sum(is.na(ruler$label)), " term(s) with no label to spaCy; see ",
+        unlabeled_path)
+ruler <- ruler[!is.na(label)]
+message("Entity ruler: ", nrow(ruler), " unique multi-word term(s): ",
+        paste(ruler[, .N, by = label][order(-N), paste0(label, " ", N)],
+              collapse = ", "))
+
+dict_ents <- unlist(Map(function(tt, lab)
+  entity_specify(tt,
+                 case_sensitive  = TRUE,
+                 whole_word_only = TRUE,
+                 entity_label    = lab),
+  split(ruler$term, ruler$label), sort(unique(ruler$label))),
+  recursive = FALSE, use.names = FALSE)
+# textNet <= 1.1.1.9000 wrote case-sensitive terms under spaCy's LOWER
+# attribute, which compares against the lowercased token, so no capitalized
+# term could ever match. Case-sensitive patterns must use ORTH.
+if (!identical(names(dict_ents[[1]]$pattern[[1]]), "ORTH")) {
+  stop("textNet::entity_specify(case_sensitive = TRUE) does not emit ORTH ",
+       "patterns; capitalized ruler terms would never match. Install the ",
+       "fixed textNet.")
+}
 dict_ents <- c(dict_ents, textNet::build_structural_org_patterns())
 
 # === RUN PARSING ===
@@ -172,7 +220,7 @@ keptentities <- c("PERSON",
                   "LOC", "PRODUCT",
                   "EVENT", "WORK_OF_ART",
                   "LAW", "LANGUAGE",
-                  "PARTIES", "CUSTOM", "DICT", "PATTERN")
+                  "PARTIES", "CUSTOM", "PATTERN")
 
 extract_dir <- "tijuanabox/core_data/raw_extracted_networks"
 for (m in seq_along(projects)) {
